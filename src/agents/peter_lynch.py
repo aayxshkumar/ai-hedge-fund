@@ -334,11 +334,10 @@ def analyze_lynch_valuation(financial_line_items: list, market_cap: float | None
     # Compute PEG if possible
     peg_ratio = None
     if pe_ratio and eps_growth_rate and eps_growth_rate > 0:
-        # PEG ratio formula: P/E divided by growth rate (as percentage)
-        # Since eps_growth_rate is stored as decimal (0.25 for 25%),
-        # we multiply by 100 to convert to percentage for the PEG calculation
-        # Example: P/E=20, growth=0.25 (25%) => PEG = 20/25 = 0.8
-        peg_ratio = pe_ratio / (eps_growth_rate * 100)
+        # PEG = P/E / annual_growth_pct.  eps_growth_rate is a CAGR decimal
+        # (e.g. 0.25 = 25%), so convert to percentage first.
+        growth_pct = eps_growth_rate * 100
+        peg_ratio = pe_ratio / max(growth_pct, 0.01)
         details.append(f"PEG ratio: {peg_ratio:.2f}")
 
     # Scoring logic:

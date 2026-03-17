@@ -152,12 +152,10 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
     if len(metrics) < 2:
         return {"score": 0, "max_score": max_score, "details": "Insufficient history"}
 
-    # Revenue CAGR (oldest to latest)
-    revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue]
-    if len(revs) >= 2 and revs[0] > 0:
-        cagr = (revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1
-    else:
-        cagr = None
+    # Revenue growth: FinancialMetrics has revenue_growth (period-over-period)
+    # Use the average of available revenue_growth values as a CAGR proxy
+    growth_vals = [m.revenue_growth for m in metrics if m.revenue_growth is not None]
+    cagr = sum(growth_vals) / len(growth_vals) if growth_vals else None
 
     score, details = 0, []
 
@@ -204,16 +202,9 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
     latest = metrics[0]
     score, details = 0, []
 
-    # Beta
-    beta = getattr(latest, "beta", None)
-    if beta is not None:
-        if beta < 1.3:
-            score += 1
-            details.append(f"Beta {beta:.2f}")
-        else:
-            details.append(f"High beta {beta:.2f}")
-    else:
-        details.append("Beta NA")
+    # Beta — not on FinancialMetrics; default to 1.0 (market average)
+    beta = None
+    details.append("Beta NA (using market default 1.0)")
 
     # Debt / Equity
     dte = getattr(latest, "debt_to_equity", None)
@@ -226,11 +217,9 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
     else:
         details.append("D/E NA")
 
-    # Interest coverage
-    ebit = getattr(latest, "ebit", None)
-    interest = getattr(latest, "interest_expense", None)
-    if ebit and interest and interest != 0:
-        coverage = ebit / abs(interest)
+    # Interest coverage (directly available on FinancialMetrics)
+    coverage = getattr(latest, "interest_coverage", None)
+    if coverage is not None:
         if coverage > 3:
             score += 1
             details.append(f"Interest coverage × {coverage:.1f}")
@@ -239,7 +228,6 @@ def analyze_risk_profile(metrics: list, line_items: list) -> dict[str, any]:
     else:
         details.append("Interest coverage NA")
 
-    # Compute cost of equity for later use
     cost_of_equity = estimate_cost_of_equity(beta)
 
     return {
@@ -294,17 +282,23 @@ def calculate_intrinsic_value_dcf(metrics: list, line_items: list, risk_analysis
         return {"intrinsic_value": None, "details": ["Insufficient data"]}
 
     latest_m = metrics[0]
-    fcff0 = getattr(latest_m, "free_cash_flow", None)
+    # free_cash_flow lives on line_items, not FinancialMetrics
+    fcff0 = getattr(line_items[0], "free_cash_flow", None)
     shares = getattr(line_items[0], "outstanding_shares", None)
     if not fcff0 or not shares:
-        return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
+        # Fallback: derive from free_cash_flow_per_share on metrics
+        fcf_ps = getattr(latest_m, "free_cash_flow_per_share", None)
+        if fcf_ps and shares:
+            fcff0 = fcf_ps * shares
+        else:
+            return {"intrinsic_value": None, "details": ["Missing FCFF or share count"]}
 
-    # Growth assumptions
-    revs = [m.revenue for m in reversed(metrics) if m.revenue]
-    if len(revs) >= 2 and revs[0] > 0:
-        base_growth = min((revs[-1] / revs[0]) ** (1 / (len(revs) - 1)) - 1, 0.12)
+    # Growth assumptions — use average revenue_growth from metrics
+    growth_vals = [m.revenue_growth for m in metrics if m.revenue_growth is not None]
+    if growth_vals:
+        base_growth = min(sum(growth_vals) / len(growth_vals), 0.12)
     else:
-        base_growth = 0.04  # fallback
+        base_growth = 0.04
 
     terminal_growth = 0.025
     years = 10

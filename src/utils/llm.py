@@ -1,6 +1,7 @@
 """Helper functions for LLM"""
 
 import json
+import time
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
@@ -35,8 +36,8 @@ def call_llm(
         model_name, model_provider = get_agent_model_config(state, agent_name)
     else:
         # Use system defaults when no state or agent_name is provided
-        model_name = "gpt-4.1"
-        model_provider = "OPENAI"
+        model_name = "claude-opus-4-6"
+        model_provider = "Anthropic"
 
     # Extract API keys from state if available
     api_keys = None
@@ -72,6 +73,10 @@ def call_llm(
         except Exception as e:
             if agent_name:
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
+
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                time.sleep(backoff)
 
             if attempt == max_retries - 1:
                 print(f"Error in LLM call after {max_retries} attempts: {e}")
@@ -137,8 +142,8 @@ def get_agent_model_config(state, agent_name):
             return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
     
     # Fall back to global configuration (system defaults)
-    model_name = state.get("metadata", {}).get("model_name") or "gpt-4.1"
-    model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
+    model_name = state.get("metadata", {}).get("model_name") or "claude-opus-4-6"
+    model_provider = state.get("metadata", {}).get("model_provider") or "Anthropic"
     
     # Convert enum to string if necessary
     if hasattr(model_provider, 'value'):

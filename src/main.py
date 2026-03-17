@@ -98,30 +98,46 @@ def start(state: AgentState):
 
 
 def create_workflow(selected_analysts=None):
-    """Create the workflow with selected analysts."""
+    """Create the workflow with selected analysts.
+
+    The swarm analyst runs after all other analysts complete (it reads their
+    signals for its multi-persona debate).  All other analysts run in parallel.
+
+    Flow:  start → [analysts in parallel] → swarm_analyst → risk_mgmt → portfolio_mgr → END
+    If swarm_analyst is not selected, analysts connect directly to risk_mgmt.
+    """
     workflow = StateGraph(AgentState)
     workflow.add_node("start_node", start)
 
-    # Get analyst nodes from the configuration
     analyst_nodes = get_analyst_nodes()
 
-    # Default to all analysts if none selected
     if selected_analysts is None:
         selected_analysts = list(analyst_nodes.keys())
-    # Add selected analyst nodes
-    for analyst_key in selected_analysts:
+
+    swarm_selected = "swarm_analyst" in selected_analysts
+    regular_analysts = [k for k in selected_analysts if k != "swarm_analyst"]
+
+    for analyst_key in regular_analysts:
         node_name, node_func = analyst_nodes[analyst_key]
         workflow.add_node(node_name, node_func)
         workflow.add_edge("start_node", node_name)
 
-    # Always add risk and portfolio management
     workflow.add_node("risk_management_agent", risk_management_agent)
     workflow.add_node("portfolio_manager", portfolio_management_agent)
 
-    # Connect selected analysts to risk management
-    for analyst_key in selected_analysts:
-        node_name = analyst_nodes[analyst_key][0]
-        workflow.add_edge(node_name, "risk_management_agent")
+    if swarm_selected and "swarm_analyst" in analyst_nodes:
+        swarm_name, swarm_func = analyst_nodes["swarm_analyst"]
+        workflow.add_node(swarm_name, swarm_func)
+
+        for analyst_key in regular_analysts:
+            node_name = analyst_nodes[analyst_key][0]
+            workflow.add_edge(node_name, swarm_name)
+
+        workflow.add_edge(swarm_name, "risk_management_agent")
+    else:
+        for analyst_key in regular_analysts:
+            node_name = analyst_nodes[analyst_key][0]
+            workflow.add_edge(node_name, "risk_management_agent")
 
     workflow.add_edge("risk_management_agent", "portfolio_manager")
     workflow.add_edge("portfolio_manager", END)

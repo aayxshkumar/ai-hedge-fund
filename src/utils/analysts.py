@@ -19,6 +19,9 @@ from src.agents.rakesh_jhunjhunwala import rakesh_jhunjhunwala_agent
 from src.agents.mohnish_pabrai import mohnish_pabrai_agent
 from src.agents.news_sentiment import news_sentiment_agent
 from src.agents.growth_agent import growth_analyst_agent
+from src.agents.swarm_analyst import swarm_analyst_agent
+from src.agents.options_analyst import options_analyst_agent
+from src.agents.target_analyst import target_analyst_agent
 
 # Define analyst configuration - single source of truth
 ANALYST_CONFIG = {
@@ -165,6 +168,30 @@ ANALYST_CONFIG = {
         "agent_func": valuation_analyst_agent,
         "type": "analyst",
         "order": 16,
+    },
+    "options_analyst": {
+        "display_name": "Options Analyst",
+        "description": "Options Flow & IV Specialist",
+        "investing_style": "Analyzes options chains, implied volatility surfaces, put/call ratios, max pain, and unusual activity to uncover institutional positioning and directional bias.",
+        "agent_func": options_analyst_agent,
+        "type": "analyst",
+        "order": 17,
+    },
+    "target_analyst": {
+        "display_name": "Target Analyst",
+        "description": "Price Target & Time Horizon Specialist",
+        "investing_style": "Sets precise price targets, stop-losses, and time horizons using technical levels (support/resistance, Fibonacci, ATR, pivots), analyst consensus, and risk/reward analysis.",
+        "agent_func": target_analyst_agent,
+        "type": "analyst",
+        "order": 19,
+    },
+    "swarm_analyst": {
+        "display_name": "Swarm Analyst",
+        "description": "MiroFish Swarm Intelligence",
+        "investing_style": "Runs a multi-persona debate (Institutional PM, Quant, Contrarian, India Specialist, Risk Officer) on all analyst signals to build emergent consensus — inspired by MiroFish swarm intelligence.",
+        "agent_func": swarm_analyst_agent,
+        "type": "analyst",
+        "order": 20,
     },
 }
 

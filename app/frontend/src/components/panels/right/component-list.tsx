@@ -12,6 +12,7 @@ interface ComponentListProps {
   activeItem: string | null;
   onSearchChange: (query: string) => void;
   onAccordionChange: (value: string[]) => void;
+  onRetry?: () => void;
 }
 
 export function ComponentList({
@@ -23,6 +24,7 @@ export function ComponentList({
   activeItem,
   onSearchChange,
   onAccordionChange,
+  onRetry,
 }: ComponentListProps) {
   return (
     <div className="flex-grow overflow-auto text-primary scrollbar-thin scrollbar-thumb-ramp-grey-700">
@@ -58,7 +60,12 @@ export function ComponentList({
           {componentGroups.length === 0 ? (
             <div className="space-y-2">
               <div>No components available</div>
-              <div className="text-xs">Components will appear here when loaded</div>
+              <div className="text-xs">Ensure the backend server is running on port 8000</div>
+              {onRetry && (
+                <button onClick={onRetry} className="mt-2 px-3 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer">
+                  Retry
+                </button>
+              )}
             </div>
           ) : (
             'No components match your search'

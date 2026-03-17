@@ -371,10 +371,8 @@ def analyze_management_quality(financial_line_items: list, insider_trades: list)
     # 4. Insider activity - Munger values skin in the game
     if insider_trades and len(insider_trades) > 0:
         # Count buys vs. sells
-        buys = sum(1 for trade in insider_trades if hasattr(trade, 'transaction_type') and 
-                   trade.transaction_type and trade.transaction_type.lower() in ['buy', 'purchase'])
-        sells = sum(1 for trade in insider_trades if hasattr(trade, 'transaction_type') and 
-                    trade.transaction_type and trade.transaction_type.lower() in ['sell', 'sale'])
+        buys = sum(1 for trade in insider_trades if trade.transaction_shares is not None and trade.transaction_shares > 0)
+        sells = sum(1 for trade in insider_trades if trade.transaction_shares is not None and trade.transaction_shares < 0)
         
         # Calculate the buy ratio
         total_trades = buys + sells
@@ -432,12 +430,8 @@ def analyze_management_quality(financial_line_items: list, insider_trades: list)
 
     # Insider ratio -> we compute `insider_buy_ratio`
     if insider_trades and len(insider_trades) > 0:
-        buys = sum(1 for t in insider_trades
-                   if getattr(t, "transaction_type", None)
-                   and t.transaction_type.lower() in ["buy", "purchase"])
-        sells = sum(1 for t in insider_trades
-                    if getattr(t, "transaction_type", None)
-                    and t.transaction_type.lower() in ["sell", "sale"])
+        buys = sum(1 for t in insider_trades if t.transaction_shares is not None and t.transaction_shares > 0)
+        sells = sum(1 for t in insider_trades if t.transaction_shares is not None and t.transaction_shares < 0)
         total = buys + sells
         insider_buy_ratio = (buys / total) if total > 0 else None
 

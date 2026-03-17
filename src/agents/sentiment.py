@@ -40,15 +40,16 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
         # Get the company news
         company_news = get_company_news(ticker, end_date, limit=100, api_key=api_key)
 
-        # Get the sentiment from the company news
+        # Get the sentiment from the company news (Yahoo Finance rarely provides this)
         sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
-        news_signals = np.where(sentiment == "negative", "bearish", 
-                              np.where(sentiment == "positive", "bullish", "neutral")).tolist()
-        
+        news_signals = np.where(sentiment == "negative", "bearish",
+                              np.where(sentiment == "positive", "bullish", "neutral")).tolist() if len(sentiment) > 0 else []
+
         progress.update_status(agent_id, ticker, "Combining signals")
-        # Combine signals from both sources with weights
-        insider_weight = 0.3
-        news_weight = 0.7
+        # When news sentiment is unavailable fall back to insider-only weighting
+        has_news = len(news_signals) > 0
+        insider_weight = 0.3 if has_news else 1.0
+        news_weight = 0.7 if has_news else 0.0
         
         # Calculate weighted signal counts
         bullish_signals = (

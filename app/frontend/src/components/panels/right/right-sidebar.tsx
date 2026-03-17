@@ -35,21 +35,29 @@ export function RightSidebar({
   const [componentGroups, setComponentGroups] = useState<ComponentGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Load component groups on mount
+  const [loadError, setLoadError] = useState(false);
+
+  const loadComponentGroups = async () => {
+    try {
+      setIsLoading(true);
+      setLoadError(false);
+      const groups = await getComponentGroups();
+      setComponentGroups(groups);
+    } catch (error) {
+      console.error('Failed to load component groups:', error);
+      setLoadError(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadComponentGroups = async () => {
-      try {
-        setIsLoading(true);
-        const groups = await getComponentGroups();
-        setComponentGroups(groups);
-      } catch (error) {
-        console.error('Failed to load component groups:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
     loadComponentGroups();
+    const retryInterval = setInterval(() => {
+      if (componentGroups.length === 0) loadComponentGroups();
+      else clearInterval(retryInterval);
+    }, 5000);
+    return () => clearInterval(retryInterval);
   }, []);
   
   const { 
@@ -83,6 +91,7 @@ export function RightSidebar({
         activeItem={activeItem}
         onSearchChange={setSearchQuery}
         onAccordionChange={handleAccordionChange}
+        onRetry={loadComponentGroups}
       />
       
       {/* Resize handle - on the left side for right sidebar */}
