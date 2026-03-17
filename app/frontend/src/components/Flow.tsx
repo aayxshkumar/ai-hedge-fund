@@ -43,7 +43,7 @@ export function Flow({ className = '' }: FlowProps) {
   const proOptions = { hideAttribution: true };
   
   // Get flow context for flow ID
-  const { currentFlowId } = useFlowContext();
+  const { currentFlowId, isLocked } = useFlowContext();
   
   // Get enhanced flow actions for complete state persistence
   const { saveCurrentFlowWithCompleteState } = useEnhancedFlowActions();
@@ -298,6 +298,8 @@ export function Flow({ className = '' }: FlowProps) {
           onInit={onInit}
           colorMode={colorMode}
           proOptions={proOptions}
+          nodesDraggable={!isLocked}
+          nodesConnectable={!isLocked}
         >
           <Background 
             variant={BackgroundVariant.Dots}

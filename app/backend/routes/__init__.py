@@ -8,6 +8,11 @@ from app.backend.routes.flow_runs import router as flow_runs_router
 from app.backend.routes.ollama import router as ollama_router
 from app.backend.routes.language_models import router as language_models_router
 from app.backend.routes.api_keys import router as api_keys_router
+from app.backend.routes.strategies import router as strategies_router
+from app.backend.routes.derivatives import router as derivatives_router
+from app.backend.routes.stocks import router as stocks_router
+from app.backend.routes.algo_trader import router as algo_trader_router
+from app.backend.routes.connections import router as connections_router
 
 # Main API router
 api_router = APIRouter()
@@ -21,3 +26,8 @@ api_router.include_router(flow_runs_router, tags=["flow-runs"])
 api_router.include_router(ollama_router, tags=["ollama"])
 api_router.include_router(language_models_router, tags=["language-models"])
 api_router.include_router(api_keys_router, tags=["api-keys"])
+api_router.include_router(strategies_router)
+api_router.include_router(derivatives_router)
+api_router.include_router(stocks_router)
+api_router.include_router(algo_trader_router)
+api_router.include_router(connections_router)

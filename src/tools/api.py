@@ -20,6 +20,7 @@ _cache = get_cache()
 
 _resolved_tickers: dict[str, str] = {}
 _yf_ticker_objects: dict[str, yf.Ticker] = {}
+_YF_CACHE_MAX = 200
 
 
 def _resolve_ticker(ticker: str) -> str:
@@ -52,6 +53,9 @@ def _resolve_ticker(ticker: str) -> str:
 
 def _get_yf_ticker(resolved: str) -> yf.Ticker:
     if resolved not in _yf_ticker_objects:
+        if len(_yf_ticker_objects) >= _YF_CACHE_MAX:
+            oldest = next(iter(_yf_ticker_objects))
+            del _yf_ticker_objects[oldest]
         _yf_ticker_objects[resolved] = yf.Ticker(resolved)
     return _yf_ticker_objects[resolved]
 
@@ -615,17 +619,32 @@ def get_market_cap(
     end_date: str,
     api_key: str = None,
 ) -> float | None:
-    """Return the current market cap from Yahoo Finance .info."""
-    resolved = _resolve_ticker(ticker)
-    t = _get_yf_ticker(resolved)
-    info = t.info or {}
-    mcap = info.get("marketCap")
-    if mcap:
-        return float(mcap)
+    """Return point-in-time market cap as of *end_date*.
 
+    First tries FinancialMetrics (period-appropriate).  Falls back to
+    an estimate: shares-outstanding × price-on-end_date via yfinance
+    history.  Only uses live `info` as a last resort.
+    """
     metrics = get_financial_metrics(ticker, end_date, api_key=api_key)
     if metrics and metrics[0].market_cap:
         return metrics[0].market_cap
+
+    resolved = _resolve_ticker(ticker)
+    t = _get_yf_ticker(resolved)
+
+    try:
+        hist = t.history(start=end_date, period="5d")
+        if hist is not None and not hist.empty:
+            price_at_date = float(hist["Close"].iloc[0])
+            shares = (t.info or {}).get("sharesOutstanding")
+            if shares:
+                return price_at_date * float(shares)
+    except Exception:
+        pass
+
+    mcap = (t.info or {}).get("marketCap")
+    if mcap:
+        return float(mcap)
     return None
 
 

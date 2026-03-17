@@ -7,6 +7,7 @@ from app.backend.routes import api_router
 from app.backend.database.connection import engine
 from app.backend.database.models import Base
 from app.backend.services.ollama_service import ollama_service
+from app.backend.middleware.auth import BearerAuthMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,11 +21,14 @@ Base.metadata.create_all(bind=engine)
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Frontend URLs
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth middleware — active only when API_AUTH_TOKEN is set in .env
+app.add_middleware(BearerAuthMiddleware)
 
 # Include all routes
 app.include_router(api_router)

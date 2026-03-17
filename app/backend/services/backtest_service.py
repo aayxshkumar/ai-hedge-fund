@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -12,6 +13,7 @@ from src.tools.api import (
     get_financial_metrics,
     get_insider_trades,
 )
+from src.algo_trader.fill_model import FillModel
 from app.backend.services.graph import run_graph_async, parse_hedge_fund_response
 from app.backend.services.portfolio import create_portfolio
 
@@ -56,6 +58,7 @@ class BacktestService:
         self.model_provider = model_provider
         self.request = request
         self.portfolio_values = []
+        self._fill_model = FillModel()
 
     def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float) -> int:
         """
@@ -69,35 +72,32 @@ class BacktestService:
         position = self.portfolio["positions"][ticker]
 
         if action == "buy":
-            cost = quantity * current_price
+            fill = self._fill_model.estimate("BUY", quantity, current_price)
+            cost = quantity * fill.fill_price + fill.transaction_cost
             if cost <= self.portfolio["cash"]:
-                # Weighted average cost basis for the new total
                 old_shares = position["long"]
                 old_cost_basis = position["long_cost_basis"]
-                new_shares = quantity
-                total_shares = old_shares + new_shares
+                total_shares = old_shares + quantity
 
                 if total_shares > 0:
                     total_old_cost = old_cost_basis * old_shares
-                    total_new_cost = cost
-                    position["long_cost_basis"] = (total_old_cost + total_new_cost) / total_shares
+                    position["long_cost_basis"] = (total_old_cost + quantity * fill.fill_price) / total_shares
 
                 position["long"] += quantity
                 self.portfolio["cash"] -= cost
                 return quantity
             else:
-                # Calculate maximum affordable quantity
-                max_quantity = int(self.portfolio["cash"] / current_price)
+                max_quantity = int(self.portfolio["cash"] / (fill.fill_price * 1.002))
                 if max_quantity > 0:
-                    cost = max_quantity * current_price
+                    fill = self._fill_model.estimate("BUY", max_quantity, current_price)
+                    cost = max_quantity * fill.fill_price + fill.transaction_cost
                     old_shares = position["long"]
                     old_cost_basis = position["long_cost_basis"]
                     total_shares = old_shares + max_quantity
 
                     if total_shares > 0:
                         total_old_cost = old_cost_basis * old_shares
-                        total_new_cost = cost
-                        position["long_cost_basis"] = (total_old_cost + total_new_cost) / total_shares
+                        position["long_cost_basis"] = (total_old_cost + max_quantity * fill.fill_price) / total_shares
 
                     position["long"] += max_quantity
                     self.portfolio["cash"] -= cost
@@ -107,12 +107,13 @@ class BacktestService:
         elif action == "sell":
             quantity = min(quantity, position["long"])
             if quantity > 0:
+                fill = self._fill_model.estimate("SELL", quantity, current_price)
                 avg_cost_per_share = position["long_cost_basis"] if position["long"] > 0 else 0
-                realized_gain = (current_price - avg_cost_per_share) * quantity
+                realized_gain = (fill.fill_price - avg_cost_per_share) * quantity - fill.transaction_cost
                 self.portfolio["realized_gains"][ticker]["long"] += realized_gain
 
                 position["long"] -= quantity
-                self.portfolio["cash"] += quantity * current_price
+                self.portfolio["cash"] += quantity * fill.fill_price - fill.transaction_cost
 
                 if position["long"] == 0:
                     position["long_cost_basis"] = 0.0
@@ -329,38 +330,41 @@ class BacktestService:
                     "current_step": i + 1,
                 })
 
-            # Get current prices
+            # Fetch prices: previous day close for decisions, current day close for fill / valuation
             try:
-                current_prices = {}
+                decision_prices = {}
+                fill_prices = {}
                 missing_data = False
 
                 for ticker in self.tickers:
                     try:
                         price_data = get_price_data(ticker, previous_date_str, current_date_str)
-                        if price_data.empty:
+                        if price_data.empty or len(price_data) < 1:
                             missing_data = True
                             break
-                        current_prices[ticker] = price_data.iloc[-1]["close"]
-                    except Exception as e:
+                        if len(price_data) >= 2:
+                            decision_prices[ticker] = price_data.iloc[-2]["close"]
+                            fill_prices[ticker] = (
+                                price_data.iloc[-1]["open"]
+                                if "open" in price_data.columns and pd.notna(price_data.iloc[-1]["open"])
+                                else price_data.iloc[-1]["close"]
+                            )
+                        else:
+                            decision_prices[ticker] = price_data.iloc[-1]["close"]
+                            fill_prices[ticker] = price_data.iloc[-1]["close"]
+                    except Exception:
                         missing_data = True
                         break
 
                 if missing_data:
                     continue
+                current_prices = fill_prices
 
             except Exception:
                 continue
 
-            # Create portfolio for this iteration
-            portfolio_for_graph = create_portfolio(
-                initial_cash=self.portfolio["cash"],
-                margin_requirement=self.portfolio["margin_requirement"],
-                tickers=self.tickers,
-                portfolio_positions=[]  # We'll handle positions manually
-            )
-            
-            # Copy current portfolio state to the graph portfolio
-            portfolio_for_graph.update(self.portfolio)
+            # Deep-copy portfolio so graph mutations cannot corrupt backtest state
+            portfolio_for_graph = copy.deepcopy(self.portfolio)
 
             # Execute graph-based agent decisions
             try:

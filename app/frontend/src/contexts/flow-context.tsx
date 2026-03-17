@@ -4,6 +4,7 @@ import { flowConnectionManager } from '@/hooks/use-flow-connection';
 import { clearAllNodeStates, getAllNodeStates, setNodeInternalState, setCurrentFlowId as setNodeStateFlowId } from '@/hooks/use-node-state';
 import { flowService } from '@/services/flow-service';
 import { Flow } from '@/types/flow';
+import { getLayoutedElements, findNonOverlappingPosition } from '@/utils/auto-layout';
 import { MarkerType, ReactFlowInstance, useReactFlow, XYPosition } from '@xyflow/react';
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
@@ -16,6 +17,9 @@ interface FlowContextType {
   currentFlowName: string;
   isUnsaved: boolean;
   reactFlowInstance: ReactFlowInstance;
+  isLocked: boolean;
+  toggleLock: () => void;
+  autoLayout: () => void;
 }
 
 const FlowContext = createContext<FlowContextType | null>(null);
@@ -37,6 +41,23 @@ export function FlowProvider({ children }: FlowProviderProps) {
   const [currentFlowId, setCurrentFlowId] = useState<number | null>(null);
   const [currentFlowName, setCurrentFlowName] = useState('Untitled Flow');
   const [isUnsaved, setIsUnsaved] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+
+  const toggleLock = useCallback(() => {
+    setIsLocked((prev) => !prev);
+  }, []);
+
+  const autoLayout = useCallback(() => {
+    const nodes = reactFlowInstance.getNodes();
+    const edges = reactFlowInstance.getEdges();
+    if (nodes.length === 0) return;
+
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, 'LR');
+    reactFlowInstance.setNodes(layoutedNodes);
+    reactFlowInstance.setEdges(layoutedEdges);
+    setTimeout(() => reactFlowInstance.fitView({ padding: 0.15, duration: 400 }), 50);
+    setIsUnsaved(true);
+  }, [reactFlowInstance]);
 
   // Calculate viewport center position with optional randomness
   const getViewportPosition = useCallback((addRandomness = false): XYPosition => {
@@ -316,12 +337,31 @@ export function FlowProvider({ children }: FlowProviderProps) {
         };
       }).filter((edge): edge is NonNullable<typeof edge> => edge !== null);
 
+      // Collision detection: shift new group to avoid overlapping existing nodes
+      const existingNodes = reactFlowInstance.getNodes();
+      if (existingNodes.length > 0 && validNodes.length > 0) {
+        const newMinX = Math.min(...validNodes.map(n => n.position.x));
+        const newMinY = Math.min(...validNodes.map(n => n.position.y));
+        const newMaxX = Math.max(...validNodes.map(n => n.position.x + 260));
+        const newMaxY = Math.max(...validNodes.map(n => n.position.y + 180));
+
+        const { dx, dy } = findNonOverlappingPosition(existingNodes, {
+          minX: newMinX, minY: newMinY, maxX: newMaxX, maxY: newMaxY,
+        });
+
+        if (dx !== 0 || dy !== 0) {
+          for (const node of validNodes) {
+            node.position.x += dx;
+            node.position.y += dy;
+          }
+        }
+      }
+
       // Add nodes and edges to flow
       reactFlowInstance.setNodes((nodes) => [...nodes, ...validNodes]);
       reactFlowInstance.setEdges((edges) => [...edges, ...newEdges]);
       markAsUnsaved();
-      
-      // Fit view to show all nodes after a short delay to ensure nodes are rendered
+
       setTimeout(() => {
         reactFlowInstance.fitView({ padding: 0.1, duration: 500 });
       }, 100);
@@ -348,6 +388,9 @@ export function FlowProvider({ children }: FlowProviderProps) {
     currentFlowName,
     isUnsaved,
     reactFlowInstance,
+    isLocked,
+    toggleLock,
+    autoLayout,
   };
 
   return (

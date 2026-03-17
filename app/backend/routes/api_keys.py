@@ -4,6 +4,7 @@ from typing import List
 
 from app.backend.database import get_db
 from app.backend.repositories.api_key_repository import ApiKeyRepository
+from app.backend.services.crypto import mask
 from app.backend.models.schemas import (
     ApiKeyCreateRequest,
     ApiKeyUpdateRequest,
@@ -65,13 +66,15 @@ async def get_api_keys(include_inactive: bool = False, db: Session = Depends(get
     },
 )
 async def get_api_key(provider: str, db: Session = Depends(get_db)):
-    """Get a specific API key by provider"""
+    """Get a specific API key by provider (key value is masked)"""
     try:
         repo = ApiKeyRepository(db)
         api_key = repo.get_api_key_by_provider(provider)
         if not api_key:
             raise HTTPException(status_code=404, detail="API key not found")
-        return ApiKeyResponse.from_orm(api_key)
+        resp = ApiKeyResponse.from_orm(api_key)
+        resp.key_value = mask(resp.key_value)
+        return resp
     except HTTPException:
         raise
     except Exception as e:

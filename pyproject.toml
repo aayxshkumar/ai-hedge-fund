@@ -38,6 +38,8 @@ langchain-gigachat = "^0.3.12"
 langchain-xai = "^0.2.5"
 yfinance = "^1.2.0"
 openpyxl = "^3.1.5"
+scipy = "^1.17.1"
+kiteconnect = "^5.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
@@ -60,3 +62,4 @@ force_alphabetical_sort_within_sections = true
 
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"
+algo-trader = "src.algo_trader.runner:main"

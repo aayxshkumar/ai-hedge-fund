@@ -4,6 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.backend.database.models import ApiKey
+from app.backend.services.crypto import encrypt, decrypt
 
 
 class ApiKeyRepository:
@@ -20,12 +21,11 @@ class ApiKeyRepository:
         is_active: bool = True
     ) -> ApiKey:
         """Create a new API key or update existing one"""
-        # Check if API key already exists for this provider
         existing_key = self.db.query(ApiKey).filter(ApiKey.provider == provider).first()
+        encrypted_value = encrypt(key_value)
         
         if existing_key:
-            # Update existing key
-            existing_key.key_value = key_value
+            existing_key.key_value = encrypted_value
             existing_key.description = description
             existing_key.is_active = is_active
             existing_key.updated_at = func.now()
@@ -33,10 +33,9 @@ class ApiKeyRepository:
             self.db.refresh(existing_key)
             return existing_key
         else:
-            # Create new key
             api_key = ApiKey(
                 provider=provider,
-                key_value=key_value,
+                key_value=encrypted_value,
                 description=description,
                 is_active=is_active
             )
@@ -72,7 +71,7 @@ class ApiKeyRepository:
             return None
 
         if key_value is not None:
-            api_key.key_value = key_value
+            api_key.key_value = encrypt(key_value)
         if description is not None:
             api_key.description = description
         if is_active is not None:
