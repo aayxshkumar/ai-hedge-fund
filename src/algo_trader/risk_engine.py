@@ -98,10 +98,22 @@ class RiskEngine:
         portfolio_value: float,
         current_price: float,
         signal_confidence: float = 0.5,
+        daily_vol: float | None = None,
     ) -> int:
-        """Kelly-criterion-inspired position sizing scaled by signal confidence.
+        """Confidence-scaled, volatility-targeted position sizing.
 
-        Returns the number of shares to trade, respecting all risk limits.
+        The allocation starts from the per-stock cap scaled by confidence (as
+        before). When ``daily_vol`` (realised daily return std, as a fraction)
+        is known and vol targeting is enabled, the allocation is additionally
+        capped so the position's typical one-day move is at most
+        ``target_risk_per_trade_pct`` of the portfolio:
+
+            vol_cap = portfolio_value * target_risk_per_trade_pct / daily_vol
+
+        A 1 %-vol stock and a 3 %-vol stock at the same confidence therefore get
+        3:1 money, not 1:1. Every pre-existing limit (per-stock cap, single
+        order cap) still applies; with ``daily_vol`` None the result is exactly
+        the previous behaviour.
         """
         if current_price <= 0 or portfolio_value <= 0:
             return 0
@@ -109,8 +121,13 @@ class RiskEngine:
         max_allocation = portfolio_value * self.config.max_position_pct
         confidence_scaled = max_allocation * min(max(signal_confidence, 0.1), 1.0)
         order_value = min(confidence_scaled, self.config.max_single_order_value)
-        shares = int(order_value / current_price)
 
+        target = getattr(self.config, "target_risk_per_trade_pct", None)
+        if target and daily_vol and daily_vol > 0:
+            vol_cap = portfolio_value * target / daily_vol
+            order_value = min(order_value, vol_cap)
+
+        shares = int(order_value / current_price)
         return max(shares, 0)
 
     def should_stop_loss(self, position: Position) -> bool:

@@ -31,6 +31,11 @@ class RiskConfig:
     stop_loss_pct: float = 0.05            # 5 % trailing stop
     take_profit_pct: float = 0.15          # 15 % take profit
     require_confirmation: bool = True      # human-in-the-loop approval
+    # Volatility-targeted sizing: the fraction of portfolio value a position is
+    # allowed to move in one typical day (position value x daily vol). 1 % means
+    # a 2 %-vol stock gets half the money a 1 %-vol stock gets, instead of the
+    # same amount for the same confidence. None disables vol targeting.
+    target_risk_per_trade_pct: float | None = 0.01
 
     # F&O risk
     max_fno_exposure_pct: float = 0.50     # max 50 % of capital in F&O
@@ -84,8 +89,8 @@ class AlgoTraderConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
     # Hedge fund integration
-    model_name: str = "claude-opus-4-6"
-    model_provider: str = "Anthropic"
+    model_name: str = "claude-sonnet-5-5"
+    model_provider: str = "Command Code"
     use_all_analysts: bool = True
     selected_analysts: list[str] = field(default_factory=list)
 

@@ -724,7 +724,7 @@ export function ConnectionsSettings() {
                 <Input
                   value={modelForm.model_name}
                   onChange={(e) => setModelForm((p) => ({ ...p, model_name: e.target.value }))}
-                  placeholder="claude-opus-4-6"
+                  placeholder="claude-sonnet-5-5"
                   className="text-sm"
                 />
               </div>

@@ -31,6 +31,8 @@ from src.algo_trader.strategies.squeeze_breakout import SqueezeBreakoutStrategy
 from src.algo_trader.strategies.kama_squeeze_momentum import KAMASqueezeStrategy
 from src.algo_trader.strategies.smart_money_accumulation import SmartMoneyAccumulationStrategy
 from src.algo_trader.strategies.candle_patterns import detect_patterns
+from src.algo_trader.adaptive_weights import AdaptiveWeights
+from src.algo_trader.regime import detect_regime, realised_daily_vol, apply_regime
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +93,10 @@ class TradingSignal:
     options_legs: list[dict] | None = None    # [{strike, opt_type, side, lots, premium}]
     futures_side: str | None = None           # "long", "short"
     futures_lots: int | None = None
-    strategy_name: str = ""                   # which strategy produced this
+    strategy_name: str = ""                   # dominant contributing source
+    daily_vol: float | None = None            # realised daily vol, for vol-targeted sizing
+    regime: str = "unknown"                   # market regime the weights were tilted for
+    agreement: float = 1.0                    # share of weight agreeing with the final direction
 
 
 def _signal_to_score(signal: str) -> float:
@@ -104,6 +109,14 @@ class DecisionEngine:
     def __init__(self, config: AlgoTraderConfig):
         self.config = config
         self.session_plan = None
+        # Performance-adaptive weighting over the tracked strategy record.
+        # Neutral (all x1.0) until evidence accrues; None if the tracker is unavailable.
+        try:
+            from src.algo_trader.strategy_tracker import StrategyTracker
+            self.adaptive = AdaptiveWeights(StrategyTracker())
+        except Exception as e:  # pragma: no cover
+            log.warning("adaptive weights disabled: %s", e)
+            self.adaptive = None
         self.momentum = MomentumStrategy(config.strategy)
         self.mean_rev = MeanReversionStrategy(config.strategy)
         self.supertrend = SupertrendStrategy(config.strategy)
@@ -213,6 +226,7 @@ class DecisionEngine:
             "vwap": None, "adx_trend": None, "volume_breakout": None,
             "squeeze_breakout": None, "kama_squeeze": None, "smart_money": None,
             "candle_patterns": None,
+            "_regime": None, "_daily_vol": None,   # underscore keys are not strategies
         }
         try:
             df = _get_cached_price(ticker, start, end)
@@ -237,6 +251,8 @@ class DecisionEngine:
                 "kama_squeeze": self._safe_analyse(self.kama_squeeze, df),
                 "smart_money": self._safe_analyse(self.smart_money, df),
                 "candle_patterns": candle_sig,
+                "_regime": detect_regime(df).to_dict(),
+                "_daily_vol": realised_daily_vol(df),
             }
         except Exception as e:
             log.warning("Analysis failed for %s: %s", ticker, e)
@@ -282,8 +298,19 @@ class DecisionEngine:
         sources = {}
         weighted_score = 0.0
         total_weight = 0.0
+        contributions: dict[str, float] = {}   # source -> signed weighted contribution
 
-        weights = self._get_weights()
+        ticker_quant = quant_signals.get(ticker, {})
+        regime_info = ticker_quant.get("_regime") or {}
+        regime_label = regime_info.get("label", "unknown") if isinstance(regime_info, dict) else "unknown"
+
+        # Base weights (defaults overlaid by any SessionPlan), tilted for the
+        # current regime, then scaled by each source's tracked performance.
+        weights = dict(SIGNAL_WEIGHTS)
+        weights.update(self._get_weights())
+        weights = apply_regime(weights, regime_label)
+        if self.adaptive is not None:
+            weights = self.adaptive.apply(weights)
 
         # --- Meta Analyst verdict (21-agent consensus) ---
         meta_v = (meta_verdicts or {}).get(ticker)
@@ -302,6 +329,7 @@ class DecisionEngine:
             w = weights.get("meta_analyst", 0.35)
             weighted_score += meta_score * w
             total_weight += w
+            contributions["meta_analyst"] = meta_score * w
 
         # --- Live hedge fund signal ---
         hf_signal = self._extract_hedge_fund_signal(ticker, hedge_fund_result)
@@ -311,9 +339,9 @@ class DecisionEngine:
             w = weights.get("hedge_fund", 0.15)
             weighted_score += hf_score * w
             total_weight += w
+            contributions["hedge_fund"] = hf_score * w
 
         # --- Quant strategy signals ---
-        ticker_quant = quant_signals.get(ticker, {})
         for strategy_name in [
             "candle_patterns", "momentum", "mean_reversion", "supertrend",
             "vwap", "adx_trend", "volume_breakout", "squeeze_breakout",
@@ -326,13 +354,23 @@ class DecisionEngine:
                 weight = weights.get(strategy_name, 0.05)
                 weighted_score += score * weight
                 total_weight += weight
+                contributions[strategy_name] = score * weight
 
         if total_weight > 0:
             final_score = weighted_score / total_weight
         else:
             final_score = 0.0
 
-        confidence = min(abs(final_score), 1.0)
+        # Agreement: share of active weight pointing the same way as the final
+        # score. Averaging hides conflict - a 0.9 "strong buy" and a 0.8 "sell"
+        # net to a confident-looking 0.1 - so confidence is scaled by agreement:
+        # unanimous keeps it, an even split halves it.
+        direction = 1.0 if final_score > 0 else (-1.0 if final_score < 0 else 0.0)
+        agree_w = sum(weights.get(k, 0.05) for k, c in contributions.items()
+                      if c != 0 and (c > 0) == (direction > 0)) if direction else 0.0
+        active_w = sum(weights.get(k, 0.05) for k, c in contributions.items() if c != 0)
+        agreement = (agree_w / active_w) if active_w > 0 else 1.0
+        confidence = min(abs(final_score), 1.0) * (0.5 + 0.5 * agreement)
         if final_score > 0.15:
             action = "buy"
         elif final_score < -0.15:
@@ -340,11 +378,25 @@ class DecisionEngine:
         else:
             action = "hold"
 
+        # Attribute the signal to its dominant source so outcomes can be fed
+        # back into the tracker (previously strategy_name was always empty and
+        # the feedback loop never recorded fused equity trades).
+        # Only a source that actually pushed in the final direction can be the
+        # dominant one; an all-hold fusion has no author.
+        aligned = {k: v for k, v in contributions.items()
+                   if (v > 0 and action == "buy") or (v < 0 and action == "sell")}
+        dominant = max(aligned, key=lambda k: abs(aligned[k])) if aligned else ""
+
         reasoning_parts = []
         for src_name, src_data in sources.items():
             sig = src_data.get("signal", src_data.get("action", "?"))
             conf = src_data.get("confidence", 0)
             reasoning_parts.append(f"{src_name}: {sig} ({conf:.0%})")
+
+        if regime_label != "unknown":
+            reasoning_parts.append(f"regime: {regime_label}")
+        if contributions and agreement < 0.999:
+            reasoning_parts.append(f"agreement: {agreement:.0%}")
 
         return TradingSignal(
             ticker=ticker,
@@ -352,6 +404,10 @@ class DecisionEngine:
             confidence=round(confidence, 3),
             source_signals=sources,
             reasoning=" | ".join(reasoning_parts) if reasoning_parts else "Insufficient data",
+            strategy_name=dominant,
+            daily_vol=ticker_quant.get("_daily_vol"),
+            regime=regime_label,
+            agreement=round(agreement, 3),
         )
 
     def _generate_fno_signals(
