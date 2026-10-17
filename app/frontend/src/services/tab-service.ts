@@ -3,12 +3,11 @@ import { FlowTabContent } from '@/components/tabs/flow-tab-content';
 import { StockAnalysis } from '@/components/stock-analysis/stock-analysis';
 import { Portfolio } from '@/components/portfolio/portfolio';
 import { MutualFunds } from '@/components/mutual-funds/mutual-funds';
-import { Tradebook } from '@/components/tradebook/tradebook';
 import { Flow } from '@/types/flow';
 import { ReactNode, createElement } from 'react';
 
 export interface TabData {
-  type: 'flow' | 'settings' | 'stock-analysis' | 'portfolio' | 'mutual-funds' | 'tradebook';
+  type: 'flow' | 'settings' | 'stock-analysis' | 'portfolio' | 'mutual-funds';
   title: string;
   flow?: Flow;
   metadata?: Record<string, any>;
@@ -34,9 +33,6 @@ export class TabService {
 
       case 'mutual-funds':
         return createElement(MutualFunds);
-
-      case 'tradebook':
-        return createElement(Tradebook);
 
       default:
         throw new Error(`Unsupported tab type: ${tabData.type}`);
@@ -84,14 +80,6 @@ export class TabService {
     };
   }
 
-  static createTradebookTab(): TabData & { content: ReactNode } {
-    return {
-      type: 'tradebook',
-      title: 'Tradebook',
-      content: TabService.createTabContent({ type: 'tradebook', title: 'Tradebook' }),
-    };
-  }
-
   // Restore tab content for persisted tabs (used when loading from localStorage)
   static restoreTabContent(tabData: TabData): ReactNode {
     return TabService.createTabContent(tabData);
@@ -117,9 +105,6 @@ export class TabService {
 
       case 'mutual-funds':
         return TabService.createMutualFundsTab();
-
-      case 'tradebook':
-        return TabService.createTradebookTab();
 
       default:
         throw new Error(`Cannot restore unsupported tab type: ${savedTab.type}`);

@@ -2,9 +2,9 @@ import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 // Define tab types
-export type TabType = 'flow' | 'settings' | 'stock-analysis' | 'portfolio' | 'mutual-funds' | 'tradebook';
+export type TabType = 'flow' | 'settings' | 'stock-analysis' | 'portfolio' | 'mutual-funds';
 
-const VALID_TAB_TYPES: TabType[] = ['flow', 'settings', 'stock-analysis', 'portfolio', 'mutual-funds', 'tradebook'];
+const VALID_TAB_TYPES: TabType[] = ['flow', 'settings', 'stock-analysis', 'portfolio', 'mutual-funds'];
 
 export interface Tab {
   id: string;
@@ -76,9 +76,6 @@ export function TabsProvider({ children }: TabsProviderProps) {
     }
     if (type === 'portfolio') {
       return 'portfolio';
-    }
-    if (type === 'tradebook') {
-      return 'tradebook';
     }
     if (type === 'mutual-funds') {
       return 'mutual-funds';

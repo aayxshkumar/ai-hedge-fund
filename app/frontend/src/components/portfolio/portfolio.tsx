@@ -27,6 +27,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useNotifications } from '@/contexts/notifications-context';
+import { LlmStatusBanner, useLlmStatus } from '@/components/shared/llm-status';
 import {
   Area,
   AreaChart,
@@ -626,6 +627,8 @@ function getSortValue(stock: PortfolioStock, key: SortKey): number | string {
 // ── Main Portfolio component ─────────────────────────────
 
 export function Portfolio() {
+  const llmStatus = useLlmStatus();
+  const [reviewMode, setReviewMode] = useState<'quick' | 'full'>('quick');
   const [data, setData] = useState<PortfolioData | null>(null);
   const [review, setReview] = useState<AnalystReviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -715,7 +718,7 @@ export function Portfolio() {
 
   const triggerReview = useCallback(async () => {
     try {
-      await fetch(`${API_BASE}/algo-trader/portfolio/analyst-review`, { method: 'POST' });
+      await fetch(`${API_BASE}/algo-trader/portfolio/analyst-review?mode=${reviewMode}`, { method: 'POST' });
       startPolling();
     } catch { toast.error('Failed to start AI review'); }
   }, []);
@@ -790,7 +793,13 @@ export function Portfolio() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={triggerReview} disabled={reviewRunning} className="gap-1.5 text-xs">
+          <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-[10px]">
+            <button onClick={() => setReviewMode('quick')} title="Batched desk review: 5 lenses per stock, ~10 LLM calls for the whole book"
+              className={`px-2 py-1.5 cursor-pointer transition-colors ${reviewMode === 'quick' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Quick</button>
+            <button onClick={() => setReviewMode('full')} title="Every persona agent on every holding: slow and expensive (~800 LLM calls)"
+              className={`px-2 py-1.5 cursor-pointer transition-colors border-l border-border/60 ${reviewMode === 'full' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Full 21-agent</button>
+          </div>
+          <Button variant="outline" size="sm" onClick={triggerReview} disabled={reviewRunning || !!llmStatus?.limited} className="gap-1.5 text-xs">
             {reviewRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
             {reviewRunning ? 'Analyzing...' : 'Run AI Review'}
           </Button>
@@ -806,6 +815,7 @@ export function Portfolio() {
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400 flex items-center gap-2"><WifiOff className="w-4 h-4" /> {error}</div>
       )}
+      <LlmStatusBanner status={llmStatus} />
 
       {/* Progress bar during review */}
       <ReviewProgressBar running={reviewRunning} elapsed={reviewElapsed} />

@@ -540,6 +540,21 @@ def _safe_float(v, default=0) -> float:
         return default
 
 
+
+def _history_with_fallback(sym: str, start_date: str, end_date: str):
+    """yfinance history for an NSE symbol, falling back to the BSE listing.
+    Several small-caps in the book (e.g. SIMRAN, SURATRAML, TIRUSTA) trade on
+    BSE only, so ".NS" returns nothing and the row used to show N/A."""
+    import yfinance as yf
+    df = yf.Ticker(sym).history(start=start_date, end=end_date)
+    if (df is None or df.empty) and sym.endswith(".NS"):
+        alt = sym[:-3] + ".BO"
+        df = yf.Ticker(alt).history(start=start_date, end=end_date)
+        if df is not None and not df.empty:
+            log.info("%s: no NSE data, using %s", sym, alt)
+    return df
+
+
 @router.get("/portfolio/detailed")
 async def get_portfolio_with_analysis():
     """Return portfolio holdings with per-stock technical analysis and fundamentals."""
@@ -614,7 +629,7 @@ async def get_portfolio_with_analysis():
         async with _fetch_sem:
             try:
                 df = await loop.run_in_executor(
-                    None, lambda s=sym: yf.Ticker(s).history(start=start_date, end=end_date)
+                    None, lambda s=sym: _history_with_fallback(s, start_date, end_date)
                 )
                 if df is not None and not df.empty:
                     df.columns = [str(c).strip().capitalize() for c in df.columns]
@@ -1156,7 +1171,7 @@ async def record_daily_summary(lessons: str = ""):
 REVIEW_FILE = __import__("pathlib").Path(__file__).resolve().parents[3] / "outputs" / "portfolio_review.json"
 
 
-def _run_analyst_review_sync():
+def _run_analyst_review_sync(mode: str = "quick"):
     """Run 21-agent AI analysis (incl. Swarm + Options) on all portfolio holdings via Hermes."""
     import yfinance as yf
     import numpy as np
@@ -1185,59 +1200,74 @@ def _run_analyst_review_sync():
             _state.analyst_review_running = False
             return
 
-        from src.main import create_workflow
-        from langchain_core.messages import HumanMessage
-        from src.utils.analysts import ANALYST_CONFIG
-        from app.backend.database import SessionLocal
-        from app.backend.services.api_key_service import ApiKeyService
+        if mode == "quick":
+            # Batched desk review: ~10 calls for the whole book instead of ~800.
+            from src.agents.portfolio_desk import run_portfolio_desk
+            book_value = sum(h.last_price * h.quantity for h in holdings if h.quantity > 0) or 1
+            holdings_ctx = {}
+            for h in holdings:
+                if h.quantity > 0:
+                    sym = f"{h.ticker}.NS" if not h.ticker.endswith((".NS", ".BO")) else h.ticker
+                    inv = h.average_price * h.quantity
+                    holdings_ctx[sym] = {"quantity": h.quantity, "avg_price": h.average_price,
+                                         "pnl_pct": round((h.last_price / h.average_price - 1) * 100, 2) if h.average_price else None,
+                                         "weight": round(h.last_price * h.quantity / book_value * 100, 2)}
+            _state.push_event({"type": "review", "msg": f"Running desk review on {len(tickers)} stocks ({(len(tickers) + 5) // 6} batches)"})
+            verdicts = run_portfolio_desk(tickers, holdings_ctx, push=_state.push_event)
+        else:
+            from src.main import create_workflow
+            from langchain_core.messages import HumanMessage
+            from src.utils.analysts import ANALYST_CONFIG
+            from app.backend.database import SessionLocal
+            from app.backend.services.api_key_service import ApiKeyService
 
-        db = SessionLocal()
-        try:
-            api_keys = ApiKeyService(db).get_api_keys_dict()
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                api_keys = ApiKeyService(db).get_api_keys_dict()
+            finally:
+                db.close()
 
-        selected_analysts = list(ANALYST_CONFIG.keys())
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+            selected_analysts = list(ANALYST_CONFIG.keys())
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_90 = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
-        n_agents = len(selected_analysts)
-        _state.push_event({"type": "review", "msg": f"Running {n_agents}-agent analysis on {len(tickers)} stocks: {', '.join(t.replace('.NS','') for t in tickers[:8])}..."})
+            n_agents = len(selected_analysts)
+            _state.push_event({"type": "review", "msg": f"Running {n_agents}-agent analysis on {len(tickers)} stocks: {', '.join(t.replace('.NS','') for t in tickers[:8])}..."})
 
-        workflow = create_workflow(selected_analysts)
-        agent = workflow.compile()
+            workflow = create_workflow(selected_analysts)
+            agent = workflow.compile()
 
-        ai_result = agent.invoke({
-            "messages": [HumanMessage(content="Make trading decisions based on the provided data.")],
-            "data": {
-                "tickers": tickers,
-                "portfolio": {"cash": 1000000, "positions": {}},
-                "start_date": start_90,
-                "end_date": end_date,
-                "analyst_signals": {},
-            },
-            "metadata": {
-                "show_reasoning": True,
-                "model_name": _state.config.model_name,
-                "model_provider": _state.config.model_provider,
-                "request": type("Req", (), {
-                    "api_keys": api_keys,
-                    "get_agent_model_config": lambda self, agent_id: (_state.config.model_name, _state.config.model_provider),
-                })(),
-            },
-        })
+            ai_result = agent.invoke({
+                "messages": [HumanMessage(content="Make trading decisions based on the provided data.")],
+                "data": {
+                    "tickers": tickers,
+                    "portfolio": {"cash": 1000000, "positions": {}},
+                    "start_date": start_90,
+                    "end_date": end_date,
+                    "analyst_signals": {},
+                },
+                "metadata": {
+                    "show_reasoning": True,
+                    "model_name": _state.config.model_name,
+                    "model_provider": _state.config.model_provider,
+                    "request": type("Req", (), {
+                        "api_keys": api_keys,
+                        "get_agent_model_config": lambda self, agent_id: (_state.config.model_name, _state.config.model_provider),
+                    })(),
+                },
+            })
 
-        analyst_signals = ai_result.get("data", {}).get("analyst_signals", {})
+            analyst_signals = ai_result.get("data", {}).get("analyst_signals", {})
 
-        from src.algo_trader.meta_analyst import run_meta_analysis
-        verdicts = run_meta_analysis(analyst_signals, tickers)
+            from src.algo_trader.meta_analyst import run_meta_analysis
+            verdicts = run_meta_analysis(analyst_signals, tickers)
 
-        for ticker in tickers:
-            ticker_signals = {}
-            for agent_name, signals in analyst_signals.items():
-                if isinstance(signals, dict) and ticker in signals:
-                    ticker_signals[agent_name] = signals[ticker]
-            verdicts[ticker]["analyst_signals"] = ticker_signals
+            for ticker in tickers:
+                ticker_signals = {}
+                for agent_name, signals in analyst_signals.items():
+                    if isinstance(signals, dict) and ticker in signals:
+                        ticker_signals[agent_name] = signals[ticker]
+                verdicts[ticker]["analyst_signals"] = ticker_signals
 
         now_ist = datetime.now(IST).isoformat()
 
@@ -1247,6 +1277,7 @@ def _run_analyst_review_sync():
             "tickers": tickers,
             "verdicts": verdicts,
             "model_used": _state.config.model_name,
+            "mode": mode,
             "stocks_reviewed": len(tickers),
         }
 
@@ -1350,13 +1381,16 @@ def _review_scheduler_loop():
 
 
 @router.post("/portfolio/analyst-review")
-async def trigger_analyst_review(background_tasks: BackgroundTasks):
-    """Manually trigger the 21-agent analyst review (Swarm + Options + Meta) on all portfolio holdings."""
+async def trigger_analyst_review(background_tasks: BackgroundTasks, mode: str = "quick"):
+    """Trigger a portfolio review. mode=quick (default) runs the batched desk review;
+    mode=full runs every persona agent on every holding (slow, ~800 LLM calls)."""
     if _state.analyst_review_running:
         return {"message": "Analyst review already in progress", "running": True}
+    if mode not in ("quick", "full"):
+        raise HTTPException(400, "mode must be 'quick' or 'full'")
 
     loop = asyncio.get_running_loop()
-    background_tasks.add_task(loop.run_in_executor, None, _run_analyst_review_sync)
+    background_tasks.add_task(loop.run_in_executor, None, _run_analyst_review_sync, mode)
     return {"message": "Analyst review started", "running": True}
 
 
