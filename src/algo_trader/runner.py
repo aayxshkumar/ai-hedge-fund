@@ -24,6 +24,7 @@ from rich.panel import Panel
 from rich import box
 
 from src.algo_trader.config import AlgoTraderConfig
+from src.utils.llm import _default_model
 from src.algo_trader.decision_engine import DecisionEngine, TradingSignal
 from src.algo_trader.executor import ZerodhaExecutor, Order, OrderSide, OrderType, ExecutionResult
 from src.algo_trader.hermes_bridge import log_trade, log_action
@@ -65,6 +66,7 @@ class AlgoTrader:
             self.session_plan = generate_session_plan(
                 tradebook=tradebook or self.tradebook,
                 model_name=self.config.model_name,
+                model_provider=self.config.model_provider,
             )
         except Exception as e:
             log.warning("Session plan generation failed: %s", e)
@@ -515,8 +517,8 @@ class AlgoTrader:
 def main():
     parser = argparse.ArgumentParser(description="AI Algo Trader — autonomous trading on Indian markets")
     parser.add_argument("--watchlist", type=str, help="Comma-separated tickers (e.g., RELIANCE.NS,TCS.NS,INFY.NS)")
-    parser.add_argument("--model", type=str, default="claude-opus-4-6", help="LLM model name")
-    parser.add_argument("--provider", type=str, default="Anthropic", help="LLM provider")
+    parser.add_argument("--model", type=str, default=_default_model()[0], help="LLM model name")
+    parser.add_argument("--provider", type=str, default=_default_model()[1], help="LLM provider")
     parser.add_argument("--auto-trade", action="store_true", help="Disable confirmation prompts (dangerous!)")
     parser.add_argument("--read-only", action="store_true", default=True, help="Read-only mode (no orders placed)")
     parser.add_argument("--live", action="store_true", help="Enable live trading (disables read-only)")

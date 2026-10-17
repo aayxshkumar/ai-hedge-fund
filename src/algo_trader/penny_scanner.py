@@ -13,6 +13,7 @@ Each scan discovers NEW stocks by tracking previously scanned tickers.
 """
 
 from __future__ import annotations
+from src.utils.llm import _default_model
 
 import json
 import logging
@@ -370,7 +371,7 @@ def run_penny_scan(
 
     verdicts: dict = {}
     analyst_signals: dict = {}
-    effective_model = model_name or "claude-sonnet-4-20250514"
+    effective_model, effective_provider = model_name or _default_model()[0], _default_model()[1]
     try:
         from src.main import create_workflow
         from langchain_core.messages import HumanMessage
@@ -403,10 +404,10 @@ def run_penny_scan(
             "metadata": {
                 "show_reasoning": True,
                 "model_name": effective_model,
-                "model_provider": "Anthropic",
+                "model_provider": effective_provider,
                 "request": type("Req", (), {
                     "api_keys": api_keys,
-                    "get_agent_model_config": lambda self, agent_id: (effective_model, "Anthropic"),
+                    "get_agent_model_config": lambda self, agent_id: (effective_model, effective_provider),
                 })(),
             },
         })

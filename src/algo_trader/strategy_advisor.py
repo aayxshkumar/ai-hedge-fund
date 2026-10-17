@@ -118,7 +118,7 @@ Weights should sum to roughly 1.0. Asset allocation must sum to 1.0.
 """
 
 
-def generate_session_plan(tradebook=None, model_name: str = "claude-sonnet-4-20250514") -> SessionPlan:
+def generate_session_plan(tradebook=None, model_name: str | None = None, model_provider: str | None = None) -> SessionPlan:
     """Generate a SessionPlan by calling the LLM with full trading context."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -133,12 +133,15 @@ def generate_session_plan(tradebook=None, model_name: str = "claude-sonnet-4-202
     )
 
     try:
-        from langchain_anthropic import ChatAnthropic
         from langchain_core.messages import HumanMessage
+        from src.llm.models import get_model
+        from src.utils.llm import _default_model
 
-        llm = ChatAnthropic(model=model_name, temperature=0.3, max_tokens=2000)
+        default_name, default_provider = _default_model()
+        llm = get_model(model_name or default_name, model_provider or default_provider)
         response = llm.invoke([HumanMessage(content=prompt_text)])
-        raw = response.content if hasattr(response, "content") else str(response)
+        from src.utils.llm import content_text
+        raw = content_text(response)
 
         raw = raw.strip()
         if raw.startswith("```"):

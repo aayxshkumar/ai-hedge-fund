@@ -1219,10 +1219,10 @@ def _run_analyst_review_sync():
             "metadata": {
                 "show_reasoning": True,
                 "model_name": _state.config.model_name,
-                "model_provider": "Anthropic",
+                "model_provider": _state.config.model_provider,
                 "request": type("Req", (), {
                     "api_keys": api_keys,
-                    "get_agent_model_config": lambda self, agent_id: (_state.config.model_name, "Anthropic"),
+                    "get_agent_model_config": lambda self, agent_id: (_state.config.model_name, _state.config.model_provider),
                 })(),
             },
         })

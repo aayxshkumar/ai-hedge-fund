@@ -8,6 +8,7 @@ import asyncio
 _SAFE_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 from app.backend.database import get_db
+from src.utils.llm import _default_model
 from app.backend.models.schemas import ErrorResponse, HedgeFundRequest, BacktestRequest, BacktestDayResult, BacktestPerformanceMetrics
 from app.backend.models.events import StartEvent, ProgressUpdateEvent, ErrorEvent, CompleteEvent
 from app.backend.services.graph import create_graph, parse_hedge_fund_response, run_graph_async
@@ -354,11 +355,12 @@ async def backtest(request_data: BacktestRequest, request: Request, db: Session 
 
 
 from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field as _Field
 
 class AnalyzeRequest(PydanticBaseModel):
     tickers: list[str]
     analysts: list[str] | None = None
-    model_name: str = "claude-opus-4-6"
+    model_name: str = _Field(default_factory=lambda: _default_model()[0])
 
 @router.post(
     path="/analyze",
@@ -409,10 +411,10 @@ async def analyze(request_data: AnalyzeRequest, db: Session = Depends(get_db)):
             "metadata": {
                 "show_reasoning": False,
                 "model_name": request_data.model_name,
-                "model_provider": "Anthropic",
+                "model_provider": _default_model()[1],
                 "request": type("Req", (), {
                     "api_keys": api_keys,
-                    "get_agent_model_config": lambda self, agent_id: (request_data.model_name, "Anthropic"),
+                    "get_agent_model_config": lambda self, agent_id: (request_data.model_name, _default_model()[1]),
                 })(),
             },
         }))
@@ -434,7 +436,7 @@ async def analyze(request_data: AnalyzeRequest, db: Session = Depends(get_db)):
 class DetailedAnalyzeRequest(PydanticBaseModel):
     tickers: list[str]
     analysts: list[str] | None = None
-    model_name: str = "claude-opus-4-6"
+    model_name: str = _Field(default_factory=lambda: _default_model()[0])
 
 
 def _compute_technical(df) -> dict:
@@ -610,10 +612,10 @@ async def analyze_detailed(request_data: DetailedAnalyzeRequest, db: Session = D
                 "metadata": {
                     "show_reasoning": True,
                     "model_name": request_data.model_name,
-                    "model_provider": "Anthropic",
+                    "model_provider": _default_model()[1],
                     "request": type("Req", (), {
                         "api_keys": api_keys,
-                        "get_agent_model_config": lambda self, agent_id: (request_data.model_name, "Anthropic"),
+                        "get_agent_model_config": lambda self, agent_id: (request_data.model_name, _default_model()[1]),
                     })(),
                 },
             }))
