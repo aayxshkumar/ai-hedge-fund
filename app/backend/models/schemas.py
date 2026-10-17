@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from src.llm.models import ModelProvider
+from src.utils.llm import _default_model
 from enum import Enum
 from app.backend.services.graph import extract_base_agent_key
 
@@ -63,8 +64,8 @@ class BaseHedgeFundRequest(BaseModel):
     graph_nodes: List[GraphNode]
     graph_edges: List[GraphEdge]
     agent_models: Optional[List[AgentModelConfig]] = None
-    model_name: Optional[str] = "claude-opus-4-6"
-    model_provider: Optional[ModelProvider] = ModelProvider.ANTHROPIC
+    model_name: Optional[str] = Field(default_factory=lambda: _default_model()[0])
+    model_provider: Optional[ModelProvider] = Field(default_factory=lambda: ModelProvider(_default_model()[1]))
     margin_requirement: float = 0.0
     portfolio_positions: Optional[List[PortfolioPosition]] = None
     api_keys: Optional[Dict[str, str]] = None

@@ -49,7 +49,16 @@ def call_llm(
     llm = get_model(model_name, model_provider, api_keys)
 
     # For non-JSON support models, we can use structured output
-    if not (model_info and not model_info.has_json_mode()):
+    # Command Code's gateway rejects forced tool_choice ("any"/"tool"), which is
+    # what with_structured_output relies on. Bind the schema as an ordinary tool
+    # (tool_choice auto) instead and fall back to parsing JSON out of the text.
+    via_tool_call = model_provider == "Command Code"
+    if via_tool_call:
+        try:
+            llm = llm.bind_tools([pydantic_model], tool_choice="auto")
+        except Exception:
+            via_tool_call = False
+    elif not (model_info and not model_info.has_json_mode()):
         llm = llm.with_structured_output(
             pydantic_model,
             method="json_mode",
@@ -61,9 +70,17 @@ def call_llm(
             # Call the LLM
             result = llm.invoke(prompt)
 
+            if via_tool_call:
+                calls = getattr(result, "tool_calls", None) or []
+                if calls:
+                    return pydantic_model(**calls[0]["args"])
+                parsed_result = extract_json_from_response(content_text(result))
+                if parsed_result:
+                    return pydantic_model(**parsed_result)
+                raise ValueError("model returned neither a tool call nor parseable JSON")
             # For non-JSON support models, we need to extract and parse the JSON manually
             if model_info and not model_info.has_json_mode():
-                parsed_result = extract_json_from_response(result.content)
+                parsed_result = extract_json_from_response(content_text(result))
                 if parsed_result:
                     return pydantic_model(**parsed_result)
             else:
@@ -111,18 +128,50 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
 
 
 def extract_json_from_response(content: str) -> dict | None:
-    """Extracts JSON from markdown-formatted response."""
-    try:
-        json_start = content.find("```json")
-        if json_start != -1:
-            json_text = content[json_start + 7 :]  # Skip past ```json
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                return json.loads(json_text)
-    except Exception as e:
-        print(f"Error extracting JSON from response: {e}")
+    """Extracts JSON from a response: a ```json fence first, then any fence,
+    then the outermost {...} in plain text."""
+    if not content:
+        return None
+    candidates = []
+    for fence in ("```json", "```"):
+        start = content.find(fence)
+        if start != -1:
+            body = content[start + len(fence):]
+            end = body.find("```")
+            candidates.append(body[:end] if end != -1 else body)
+    lo, hi = content.find("{"), content.rfind("}")
+    if lo != -1 and hi > lo:
+        candidates.append(content[lo:hi + 1])
+    for text in candidates:
+        try:
+            parsed = json.loads(text.strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    print("Error extracting JSON from response: no parseable JSON object found")
     return None
+
+
+def content_text(response) -> str:
+    """Plain text of an LLM response. Newer langchain-anthropic returns
+    ``content`` as a list of blocks ({"type": "text", "text": ...}); older
+    versions and most other providers return a string. Callers that parse
+    JSON out of the reply need the string either way."""
+    content = getattr(response, "content", response)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type", "text") == "text":
+                parts.append(str(block.get("text", "")))
+            elif hasattr(block, "text"):
+                parts.append(str(block.text))
+        return "".join(parts)
+    return str(content)
 
 
 def _default_model() -> tuple[str, str]:

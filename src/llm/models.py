@@ -136,6 +136,22 @@ def get_models_list():
     ]
 
 
+def _db_api_key(name: str) -> str | None:
+    """Key saved through Settings > API Keys (SQLite). Background jobs such as
+    the algo trader have no request object carrying api_keys, so without this
+    a key entered in the UI was invisible to them."""
+    try:
+        from app.backend.database import SessionLocal
+        from app.backend.services.api_key_service import ApiKeyService
+        db = SessionLocal()
+        try:
+            return ApiKeyService(db).get_api_keys_dict().get(name)
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = None) -> ChatOpenAI | ChatGroq | ChatOllama | GigaChat | None:
     if model_provider == ModelProvider.GROQ:
         api_key = (api_keys or {}).get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
@@ -163,18 +179,19 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
         # Command Code is an Anthropic-compatible gateway: Claude models are served
         # on its /v1/messages route, so we reuse ChatAnthropic and only redirect
         # the base URL. The key never goes anywhere but this request.
-        api_key = (api_keys or {}).get("COMMANDCODE_API_KEY") or os.getenv("COMMANDCODE_API_KEY")
+        api_key = (api_keys or {}).get("COMMANDCODE_API_KEY") or os.getenv("COMMANDCODE_API_KEY") or _db_api_key("COMMANDCODE_API_KEY")
         if not api_key:
             print("API Key Error: Please make sure COMMANDCODE_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("Command Code API key not found. Please make sure COMMANDCODE_API_KEY is set in your .env file or provided via API keys.")
         base_url = os.getenv("COMMANDCODE_BASE_URL", "https://api.commandcode.ai/provider")
         try:
-            return ChatAnthropic(model=model_name, api_key=api_key, anthropic_api_url=base_url)
+            # 1024 (the library default) truncates agent JSON; 4096 is ample.
+            return ChatAnthropic(model=model_name, api_key=api_key, anthropic_api_url=base_url, max_tokens=4096)
         except TypeError:
             # Older langchain-anthropic without the URL field: the Anthropic SDK
             # itself honours ANTHROPIC_BASE_URL.
             os.environ["ANTHROPIC_BASE_URL"] = base_url
-            return ChatAnthropic(model=model_name, api_key=api_key)
+            return ChatAnthropic(model=model_name, api_key=api_key, max_tokens=4096)
     elif model_provider == ModelProvider.DEEPSEEK:
         api_key = (api_keys or {}).get("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:

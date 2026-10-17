@@ -471,7 +471,7 @@ export function ConnectionsSettings() {
                 </div>
                 <p className="text-[10px] text-muted-foreground">
                   Redirect URL to set in the Kite developer console:{' '}
-                  <code className="bg-muted px-1 rounded select-all">{`${API_BASE}/connections/zerodha/callback`}</code>
+                  <code className="bg-muted px-1 rounded select-all">{`${API_BASE}/connections/zerodha/redirect`}</code>
                 </p>
               </div>
             )}

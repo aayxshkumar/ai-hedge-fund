@@ -253,6 +253,7 @@ align-items:center;justify-content:center;height:100vh;margin:0}}
 </script></body></html>"""
 
 
+@router.get("/zerodha/redirect", response_class=HTMLResponse)   # URL configured in the Kite console
 @router.get("/zerodha/callback", response_class=HTMLResponse)
 async def zerodha_callback_redirect(request_token: str | None = None, status: str | None = None,
                                     error: str | None = None):
