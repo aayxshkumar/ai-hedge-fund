@@ -31,6 +31,7 @@ class ModelProvider(str, Enum):
     GIGACHAT = "GigaChat"
     AZURE_OPENAI = "Azure OpenAI"
     XAI = "xAI"
+    COMMANDCODE = "Command Code"
 
 
 class LLMModel(BaseModel):
@@ -158,6 +159,22 @@ def get_model(model_name: str, model_provider: ModelProvider, api_keys: dict = N
             print(f"API Key Error: Please make sure ANTHROPIC_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("Anthropic API key not found.  Please make sure ANTHROPIC_API_KEY is set in your .env file or provided via API keys.")
         return ChatAnthropic(model=model_name, api_key=api_key)
+    elif model_provider == ModelProvider.COMMANDCODE:
+        # Command Code is an Anthropic-compatible gateway: Claude models are served
+        # on its /v1/messages route, so we reuse ChatAnthropic and only redirect
+        # the base URL. The key never goes anywhere but this request.
+        api_key = (api_keys or {}).get("COMMANDCODE_API_KEY") or os.getenv("COMMANDCODE_API_KEY")
+        if not api_key:
+            print("API Key Error: Please make sure COMMANDCODE_API_KEY is set in your .env file or provided via API keys.")
+            raise ValueError("Command Code API key not found. Please make sure COMMANDCODE_API_KEY is set in your .env file or provided via API keys.")
+        base_url = os.getenv("COMMANDCODE_BASE_URL", "https://api.commandcode.ai/provider")
+        try:
+            return ChatAnthropic(model=model_name, api_key=api_key, anthropic_api_url=base_url)
+        except TypeError:
+            # Older langchain-anthropic without the URL field: the Anthropic SDK
+            # itself honours ANTHROPIC_BASE_URL.
+            os.environ["ANTHROPIC_BASE_URL"] = base_url
+            return ChatAnthropic(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.DEEPSEEK:
         api_key = (api_keys or {}).get("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:

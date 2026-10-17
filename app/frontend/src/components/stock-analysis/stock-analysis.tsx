@@ -809,8 +809,12 @@ function PennyScanSection() {
 
   return (
     <div className="rounded-xl border border-amber-500/30 bg-card/50 overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
         className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/20 transition-colors cursor-pointer"
       >
         <div className="flex items-center gap-3">
@@ -851,7 +855,7 @@ function PennyScanSection() {
           </button>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-amber-500/20 px-5 py-4">
@@ -1132,7 +1136,10 @@ function DiscoverySection() {
 
   return (
     <div className="rounded-xl border border-emerald-500/30 bg-card/50 overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/20 transition-colors cursor-pointer"
       >
@@ -1185,7 +1192,7 @@ function DiscoverySection() {
           </button>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-emerald-500/20 px-5 py-4 space-y-4">
@@ -1335,7 +1342,10 @@ function DailyAnalysisSection() {
 
   return (
     <div className="rounded-xl border border-blue-500/30 bg-card/50 overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/20 transition-colors cursor-pointer"
       >
@@ -1372,7 +1382,7 @@ function DailyAnalysisSection() {
           </button>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-blue-500/20 px-5 py-4 space-y-5">
@@ -1752,7 +1762,10 @@ function AnalysisLibrary() {
 
   return (
     <div className="rounded-xl border border-indigo-500/30 bg-card/50 overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); { const next = !expanded; setExpanded(next); if (next) fetchHistory(); }; } }}
         onClick={() => { const next = !expanded; setExpanded(next); if (next) fetchHistory(); }}
         className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-accent/20 transition-colors cursor-pointer"
       >
@@ -1776,7 +1789,7 @@ function AnalysisLibrary() {
           )}
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-indigo-500/20 px-5 py-4 space-y-4">
@@ -2448,7 +2461,7 @@ export function StockAnalysis() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Stock Analysis</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            AI-powered detailed analysis using Claude Opus 4.6 — technical, fundamental, and multi-analyst perspectives
+            AI-powered detailed analysis using Claude — technical, fundamental, and multi-analyst perspectives
           </p>
         </div>
 
@@ -2541,7 +2554,7 @@ export function StockAnalysis() {
             className="w-full flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer"
           >
             {loading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing with Claude Opus 4.6...</>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing with Claude...</>
             ) : (
               <><Sparkles className="w-4 h-4" /> Analyze {selectedTickers.length} Stock{selectedTickers.length !== 1 ? 's' : ''}</>
             )}

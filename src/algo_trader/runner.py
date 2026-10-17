@@ -111,12 +111,34 @@ class AlgoTrader:
             log.warning("Post-session review failed: %s", e)
 
         for t in self._session_trades:
-            sname = t.get("strategy_name", "")
-            if sname:
+            pnl = t.get("pnl", 0) or 0
+            for sname in self._contributing_sources(t):
                 self.strategy_tracker.record_live_trade(
-                    sname, t.get("pnl", 0) or 0,
-                    t.get("confidence", 0), (t.get("pnl", 0) or 0) > 0,
+                    sname, pnl, t.get("confidence", 0), pnl > 0,
                 )
+
+    @staticmethod
+    def _contributing_sources(trade: dict) -> list[str]:
+        """Sources whose direction matched the trade, for outcome attribution.
+
+        A fused signal is the work of several sources; recording the outcome
+        only against one name starves the adaptive weights of evidence. Every
+        source that agreed with the executed direction is credited (or blamed);
+        with no per-source data we fall back to the dominant strategy_name.
+        """
+        action = str(trade.get("action", "")).lower()
+        want = {"buy", "bullish", "long", "strong buy"} if action == "buy" else (
+            {"sell", "bearish", "short", "strong sell"} if action == "sell" else set())
+        names: list[str] = []
+        for src, data in (trade.get("source_signals") or {}).items():
+            if not isinstance(data, dict):
+                continue
+            sig = str(data.get("signal", data.get("action", ""))).lower()
+            if sig in want:
+                names.append(src)
+        if not names and trade.get("strategy_name"):
+            names.append(trade["strategy_name"])
+        return names
 
     def run_cycle(self) -> list[dict]:
         """Execute one full analysis-and-trade cycle. Returns a list of actions taken."""
@@ -208,6 +230,8 @@ class AlgoTrader:
                 "executed": a.get("result").success if a.get("result") else False,
                 "instrument_type": a.get("instrument_type", "equity"),
                 "strategy_name": a.get("strategy_name", ""),
+                "source_signals": a.get("source_signals", {}),
+                "regime": a.get("regime", ""),
             }
             log_trade(trade_record)
             self._session_trades.append(trade_record)
@@ -285,6 +309,7 @@ class AlgoTrader:
 
                 qty = self.risk.calculate_position_size(
                     clean_ticker, OrderSide.BUY, portfolio_value, price, signal.confidence,
+                    daily_vol=signal.daily_vol,
                 )
                 if qty <= 0:
                     continue
@@ -302,6 +327,9 @@ class AlgoTrader:
                     "confidence": signal.confidence,
                     "reasoning": signal.reasoning,
                     "result": result,
+                    "strategy_name": signal.strategy_name,
+                    "source_signals": signal.source_signals,
+                    "regime": signal.regime,
                 })
 
             elif signal.action == "sell":

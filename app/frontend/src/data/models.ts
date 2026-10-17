@@ -30,7 +30,7 @@ export const getModels = async (): Promise<LanguageModel[]> => {
 export const getDefaultModel = async (): Promise<LanguageModel | null> => {
   try {
     const models = await getModels();
-    return models.find(model => model.model_name === "claude-opus-4-6") || models[0] || null;
+    return models.find(model => model.model_name === "claude-sonnet-5-5") || models.find(model => model.model_name === "claude-opus-4-6") || models[0] || null;
   } catch (error) {
     console.error('Failed to get default model:', error);
     return null;

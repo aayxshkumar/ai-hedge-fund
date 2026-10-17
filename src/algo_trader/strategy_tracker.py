@@ -159,6 +159,23 @@ class StrategyTracker:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_live_stats(self, days: int | None = None) -> dict[str, dict]:
+        """Aggregate live_performance per strategy: trades, wins, pnl.
+
+        ``days`` limits the window (None = all history). Used by the adaptive
+        weighting layer, which shrinks toward neutral when counts are small.
+        """
+        query = "SELECT strategy_name, SUM(trades) AS trades, SUM(wins) AS wins, SUM(pnl) AS pnl FROM live_performance"
+        params: tuple = ()
+        if days is not None:
+            cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            query += " WHERE date >= ?"
+            params = (cutoff,)
+        query += " GROUP BY strategy_name"
+        with self._lock, self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return {r["strategy_name"]: {"trades": r["trades"] or 0, "wins": r["wins"] or 0, "pnl": r["pnl"] or 0.0} for r in rows}
+
     def record_live_trade(self, strategy_name: str, pnl: float, confidence: float = 0, won: bool = False):
         """Record a live trade outcome for a strategy."""
         date = datetime.now(IST).strftime("%Y-%m-%d")

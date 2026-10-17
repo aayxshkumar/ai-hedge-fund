@@ -25,6 +25,13 @@ const FINANCIAL_API_KEYS: ApiKey[] = [
 
 const LLM_API_KEYS: ApiKey[] = [
   {
+    key: 'COMMANDCODE_API_KEY',
+    label: 'Command Code API',
+    description: 'Anthropic-compatible gateway for Claude models (Sonnet 5.5, Opus 5, Haiku 5.5, Fable 5.1)',
+    url: 'https://commandcode.ai/',
+    placeholder: 'your-command-code-api-key'
+  },
+  {
     key: 'ANTHROPIC_API_KEY',
     label: 'Anthropic API',
     description: 'For Claude models (claude-4-sonnet, claude-4.1-opus, etc.)',

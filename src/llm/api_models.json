@@ -1,5 +1,35 @@
 [
   {
+    "display_name": "Claude Sonnet 5.5 (Command Code)",
+    "model_name": "claude-sonnet-5-5",
+    "provider": "Command Code"
+  },
+  {
+    "display_name": "Claude Opus 5 (Command Code)",
+    "model_name": "claude-opus-5",
+    "provider": "Command Code"
+  },
+  {
+    "display_name": "Claude Sonnet 5 (Command Code)",
+    "model_name": "claude-sonnet-5",
+    "provider": "Command Code"
+  },
+  {
+    "display_name": "Claude Haiku 5.5 (Command Code)",
+    "model_name": "claude-haiku-5-5",
+    "provider": "Command Code"
+  },
+  {
+    "display_name": "Claude Opus 4.8 (Command Code)",
+    "model_name": "claude-opus-4-8",
+    "provider": "Command Code"
+  },
+  {
+    "display_name": "Claude Fable 5.1 (Command Code)",
+    "model_name": "claude-fable-5-1",
+    "provider": "Command Code"
+  },
+  {
     "display_name": "Claude Opus 4.6",
     "model_name": "claude-opus-4-6",
     "provider": "Anthropic"
