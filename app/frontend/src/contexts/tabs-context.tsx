@@ -2,7 +2,9 @@ import { Flow } from '@/types/flow';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 
 // Define tab types
-export type TabType = 'flow' | 'settings' | 'strategy-lab' | 'stock-analysis' | 'derivatives-lab' | 'algo-dashboard' | 'portfolio' | 'tradebook';
+export type TabType = 'flow' | 'settings' | 'stock-analysis' | 'portfolio' | 'mutual-funds' | 'tradebook';
+
+const VALID_TAB_TYPES: TabType[] = ['flow', 'settings', 'stock-analysis', 'portfolio', 'mutual-funds', 'tradebook'];
 
 export interface Tab {
   id: string;
@@ -69,23 +71,17 @@ export function TabsProvider({ children }: TabsProviderProps) {
     if (type === 'settings') {
       return 'settings';
     }
-    if (type === 'strategy-lab') {
-      return 'strategy-lab';
-    }
     if (type === 'stock-analysis') {
       return 'stock-analysis';
-    }
-    if (type === 'derivatives-lab') {
-      return 'derivatives-lab';
-    }
-    if (type === 'algo-dashboard') {
-      return 'algo-dashboard';
     }
     if (type === 'portfolio') {
       return 'portfolio';
     }
     if (type === 'tradebook') {
       return 'tradebook';
+    }
+    if (type === 'mutual-funds') {
+      return 'mutual-funds';
     }
     return `${type}-${Date.now()}`;
   }, []);
@@ -116,7 +112,8 @@ export function TabsProvider({ children }: TabsProviderProps) {
       const savedActiveTabId = localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
       
       if (savedTabs) {
-        const parsedTabs: SerializableTab[] = JSON.parse(savedTabs);
+        const parsedTabs: SerializableTab[] = (JSON.parse(savedTabs) as SerializableTab[])
+          .filter(t => VALID_TAB_TYPES.includes(t.type as TabType));
         return {
           tabs: parsedTabs,
           activeTabId: savedActiveTabId || null,

@@ -13,6 +13,7 @@ from app.backend.routes.derivatives import router as derivatives_router
 from app.backend.routes.stocks import router as stocks_router
 from app.backend.routes.algo_trader import router as algo_trader_router
 from app.backend.routes.connections import router as connections_router
+from app.backend.routes.mutual_funds import router as mutual_funds_router
 
 # Main API router
 api_router = APIRouter()
@@ -31,3 +32,4 @@ api_router.include_router(derivatives_router)
 api_router.include_router(stocks_router)
 api_router.include_router(algo_trader_router)
 api_router.include_router(connections_router)
+api_router.include_router(mutual_funds_router)

@@ -3,10 +3,8 @@ import { TabService } from '@/services/tab-service';
 import { cn } from '@/lib/utils';
 import {
   BookOpen,
-  Bot,
   Briefcase,
-  FlaskConical,
-  Landmark,
+  PieChart,
   Settings,
   TrendingUp,
 } from 'lucide-react';
@@ -24,9 +22,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { type: 'portfolio', icon: <Briefcase size={18} />, label: 'Portfolio', title: 'My Portfolio', create: () => TabService.createPortfolioTab() },
   { type: 'stock-analysis', icon: <TrendingUp size={18} />, label: 'Analysis', title: 'AI Stock Analysis', create: () => TabService.createStockAnalysisTab() },
-  { type: 'strategy-lab', icon: <FlaskConical size={18} />, label: 'Stocks', title: 'Stock Strategy Backtesting', create: () => TabService.createStrategyLabTab() },
-  { type: 'derivatives-lab', icon: <Landmark size={18} />, label: 'F&O', title: 'Options & Futures', create: () => TabService.createDerivativesLabTab() },
-  { type: 'algo-dashboard', icon: <Bot size={18} />, label: 'Auto Trade', title: 'Algo Trading Dashboard', create: () => TabService.createAlgoDashboardTab() },
+  { type: 'mutual-funds', icon: <PieChart size={18} />, label: 'Funds', title: 'Mutual Funds', create: () => TabService.createMutualFundsTab() },
   { type: 'tradebook', icon: <BookOpen size={18} />, label: 'Tradebook', title: 'Trade Journal', create: () => TabService.createTradebookTab() },
 ];
 

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { useTabsContext } from '@/contexts/tabs-context';
 import { cn } from '@/lib/utils';
-import { BookOpen, Bot, Briefcase, FileText, FlaskConical, Landmark, Layout, Settings, TrendingUp, X } from 'lucide-react';
+import { BookOpen, Briefcase, FileText, Layout, PieChart, Settings, TrendingUp, X } from 'lucide-react';
 import { ReactNode, useState } from 'react';
 
 interface TabBarProps {
@@ -13,10 +13,8 @@ const getTabIcon = (type: string): ReactNode => {
     case 'flow': return <FileText size={13} />;
     case 'settings': return <Settings size={13} />;
     case 'stock-analysis': return <TrendingUp size={13} />;
-    case 'strategy-lab': return <FlaskConical size={13} />;
-    case 'derivatives-lab': return <Landmark size={13} />;
-    case 'algo-dashboard': return <Bot size={13} />;
     case 'portfolio': return <Briefcase size={13} />;
+    case 'mutual-funds': return <PieChart size={13} />;
     case 'tradebook': return <BookOpen size={13} />;
     default: return <Layout size={13} />;
   }
