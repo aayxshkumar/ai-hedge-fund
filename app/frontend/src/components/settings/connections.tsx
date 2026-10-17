@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { connectionsApi, type ConnectionsStatus, type TradingConfigUpdate } from '@/services/connections-api';
+import { API_BASE, connectionsApi, type ConnectionsStatus, type TradingConfigUpdate } from '@/services/connections-api';
 import {
   Activity,
   AlertTriangle,
@@ -24,7 +24,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -84,6 +84,8 @@ export function ConnectionsSettings() {
   const [kiteApiKey, setKiteApiKey] = useState('');
   const [kiteApiSecret, setKiteApiSecret] = useState('');
   const [requestToken, setRequestToken] = useState('');
+  const [kiteLoginPending, setKiteLoginPending] = useState(false);
+  const kitePopupRef = useRef<Window | null>(null);
   const [kiteLoginUrl, setKiteLoginUrl] = useState<string | null>(null);
   const [kiteLoginLoading, setKiteLoginLoading] = useState(false);
   const [kiteTokenLoading, setKiteTokenLoading] = useState(false);
@@ -176,16 +178,67 @@ export function ConnectionsSettings() {
 
   const handleOpenKiteLogin = async () => {
     try {
-      if (kiteLoginUrl) {
-        window.open(kiteLoginUrl, '_blank');
-      } else {
-        const r = await connectionsApi.getLoginUrl();
-        window.open(r.login_url, '_blank');
-      }
+      const url = kiteLoginUrl || (await connectionsApi.getLoginUrl()).login_url;
+      // Open in a popup window so the callback page can close it when done.
+      const popup = window.open(url, 'kite-login', 'popup=yes,width=520,height=720');
+      kitePopupRef.current = popup;
+      setKiteLoginPending(!!popup);
+      if (!popup) setSaveMsg('Popup blocked — allow popups for this site and try again');
     } catch (e: any) {
       setSaveMsg(`Error: ${e.message}`);
     }
   };
+
+  const closeKitePopup = useCallback(() => {
+    try { kitePopupRef.current?.close(); } catch { /* cross-origin, ignore */ }
+    kitePopupRef.current = null;
+    setKiteLoginPending(false);
+  }, []);
+
+  // Login result arrives from the popup: either the backend callback page
+  // (already exchanged the token) or the frontend itself if Kite redirected
+  // there (we then exchange the token here).
+  useEffect(() => {
+    const apiOrigin = new URL(API_BASE).origin;
+    const onMessage = async (ev: MessageEvent) => {
+      const d = ev.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'kite-login' && ev.origin === apiOrigin) {
+        closeKitePopup();
+        setSaveMsg(d.ok ? `Logged in as ${d.user_name || 'user'}` : `Login error: ${d.error}`);
+        setTimeout(() => setSaveMsg(null), 4000);
+        refresh();
+      } else if (d.type === 'kite-login-token' && ev.origin === window.location.origin && d.request_token) {
+        closeKitePopup();
+        setKiteTokenLoading(true);
+        try {
+          const r = await connectionsApi.exchangeToken(String(d.request_token));
+          setSaveMsg(r.error ? `Token error: ${r.error}` : `Logged in as ${r.user_name || 'user'}`);
+          refresh();
+        } catch (e: any) {
+          setSaveMsg(`Error: ${e.message}`);
+        } finally {
+          setKiteTokenLoading(false);
+          setTimeout(() => setSaveMsg(null), 4000);
+        }
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [closeKitePopup, refresh]);
+
+  // If the user closes the popup themselves, stop waiting and re-check status.
+  useEffect(() => {
+    if (!kiteLoginPending) return;
+    const id = window.setInterval(() => {
+      if (!kitePopupRef.current || kitePopupRef.current.closed) {
+        kitePopupRef.current = null;
+        setKiteLoginPending(false);
+        refresh();
+      }
+    }, 700);
+    return () => window.clearInterval(id);
+  }, [kiteLoginPending, refresh]);
 
   const handleExchangeToken = async () => {
     if (!requestToken.trim()) return;
@@ -383,6 +436,7 @@ export function ConnectionsSettings() {
                 onChange={(e) => setKiteApiKey(e.target.value)}
                 placeholder="Your Kite Connect API key"
                 className="text-sm font-mono"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKiteCredentials(); }}
               />
               <label className="text-xs font-medium text-primary">API Secret</label>
               <Input
@@ -391,6 +445,7 @@ export function ConnectionsSettings() {
                 onChange={(e) => setKiteApiSecret(e.target.value)}
                 placeholder="Your Kite Connect API secret"
                 className="text-sm font-mono"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKiteCredentials(); }}
               />
               <Button
                 size="sm"
@@ -407,12 +462,17 @@ export function ConnectionsSettings() {
             {(status?.zerodha.has_api_key || kiteLoginUrl) && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={handleOpenKiteLogin} className="gap-2">
-                    <LogIn className="h-3 w-3" /> Login to Zerodha
+                  <Button variant="outline" size="sm" onClick={handleOpenKiteLogin} disabled={kiteLoginPending} className="gap-2">
+                    {kiteLoginPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
+                    {kiteLoginPending ? 'Waiting for Zerodha login…' : 'Login to Zerodha'}
                     <ExternalLink className="h-3 w-3" />
                   </Button>
-                  <span className="text-[10px] text-muted-foreground">Opens Zerodha login in new tab</span>
+                  <span className="text-[10px] text-muted-foreground">Opens in a popup that closes itself once you're logged in</span>
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Redirect URL to set in the Kite developer console:{' '}
+                  <code className="bg-muted px-1 rounded select-all">{`${API_BASE}/connections/zerodha/callback`}</code>
+                </p>
               </div>
             )}
 
@@ -421,7 +481,7 @@ export function ConnectionsSettings() {
               <div className="space-y-2">
                 <label className="text-xs font-medium text-primary">Request Token</label>
                 <p className="text-[10px] text-muted-foreground">
-                  After logging in, you'll be redirected. Copy the <code className="bg-muted px-1 rounded">request_token</code> from the redirect URL and paste it here.
+                  Only needed if the popup didn't finish on its own: copy the <code className="bg-muted px-1 rounded">request_token</code> from the redirect URL and paste it here.
                 </p>
                 <div className="flex gap-2">
                   <Input
@@ -429,6 +489,7 @@ export function ConnectionsSettings() {
                     onChange={(e) => setRequestToken(e.target.value)}
                     placeholder="Paste request_token from redirect URL"
                     className="flex-1 text-sm font-mono"
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleExchangeToken(); }}
                   />
                   <Button
                     size="sm"
