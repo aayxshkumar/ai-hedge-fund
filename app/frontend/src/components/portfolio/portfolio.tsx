@@ -2,28 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { formatINR, formatINRCompact } from '@/lib/format-inr';
-import {
-  Activity,
-  ArrowDown,
-  ArrowUp,
-  BarChart3,
-  Bot,
-  Briefcase,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  IndianRupee,
-  Loader2,
-  Minus,
-  RefreshCw,
-  Shield,
-  Target,
-  TrendingDown,
-  TrendingUp,
-  Users,
-  Wallet,
-  WifiOff,
-} from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, BarChart3, Bot, Briefcase, ChevronDown, ChevronRight, Clock, IndianRupee, Loader2, Minus, RefreshCw, Shield, Target, TrendingDown, TrendingUp, Users, Wallet, WifiOff } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useNotifications } from '@/contexts/notifications-context';
@@ -105,6 +84,13 @@ interface PortfolioSummary {
   portfolio_value: number;
   num_holdings: number;
   num_positions: number;
+}
+
+interface BookHealth {
+  names: number; value: number; invested: number; pnl_pct: number; winners: number; losers: number;
+  effective_names: number; top5_pct: number; top10_pct: number;
+  sectors: { name: string; pct: number }[]; sizes: { name: string; pct: number }[];
+  tiny_positions: string[]; illiquid: string[]; deep_losers: [string, number][]; flags: string[];
 }
 
 interface PortfolioData {
@@ -628,7 +614,9 @@ function getSortValue(stock: PortfolioStock, key: SortKey): number | string {
 
 export function Portfolio() {
   const llmStatus = useLlmStatus();
-  const [reviewMode, setReviewMode] = useState<'quick' | 'full'>('quick');
+  const [reviewMode, setReviewMode] = useState<'personas' | 'quick' | 'full'>('personas');
+  const [health, setHealth] = useState<BookHealth | null>(null);
+  const [showHealth, setShowHealth] = useState(true);
   const [data, setData] = useState<PortfolioData | null>(null);
   const [review, setReview] = useState<AnalystReviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -732,6 +720,10 @@ export function Portfolio() {
   const verdicts = review?.review?.verdicts || {};
   const reviewTime = review?.review?.timestamp;
 
+  useEffect(() => {
+    fetch(`${API_BASE}/algo-trader/portfolio/health`).then(r => r.ok ? r.json() : null).then(h => { if (h) setHealth(h); }).catch(() => {});
+  }, [lastRefreshed]);
+
   const getVerdict = (stock: PortfolioStock): AnalystVerdict | null => {
     return verdicts[stock.yf_ticker] || verdicts[stock.ticker] || verdicts[`${stock.ticker}.NS`] || null;
   };
@@ -794,12 +786,14 @@ export function Portfolio() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-[10px]">
+            <button onClick={() => setReviewMode('personas')} title="Every analyst's rule-based scoring (Buffett, Graham, Lynch, Damodaran…): no LLM calls, ~1 minute"
+              className={`px-2 py-1.5 cursor-pointer transition-colors ${reviewMode === 'personas' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Personas</button>
             <button onClick={() => setReviewMode('quick')} title="Batched desk review: 5 lenses per stock, ~10 LLM calls for the whole book"
-              className={`px-2 py-1.5 cursor-pointer transition-colors ${reviewMode === 'quick' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Quick</button>
+              className={`px-2 py-1.5 cursor-pointer transition-colors border-l border-border/60 ${reviewMode === 'quick' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Quick</button>
             <button onClick={() => setReviewMode('full')} title="Every persona agent on every holding: slow and expensive (~800 LLM calls)"
               className={`px-2 py-1.5 cursor-pointer transition-colors border-l border-border/60 ${reviewMode === 'full' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>Full 21-agent</button>
           </div>
-          <Button variant="outline" size="sm" onClick={triggerReview} disabled={reviewRunning || !!llmStatus?.limited} className="gap-1.5 text-xs">
+          <Button variant="outline" size="sm" onClick={triggerReview} disabled={reviewRunning || (reviewMode !== 'personas' && !!llmStatus?.limited)} className="gap-1.5 text-xs">
             {reviewRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bot className="h-3 w-3" />}
             {reviewRunning ? 'Analyzing...' : 'Run AI Review'}
           </Button>
@@ -894,6 +888,56 @@ export function Portfolio() {
             <SummaryCard icon={data.summary.total_pnl >= 0 ? TrendingUp : TrendingDown} label="Total P&L" value={`${data.summary.total_pnl >= 0 ? '+' : ''}${formatINR(data.summary.total_pnl)}`} sub={`${data.summary.total_pnl_pct >= 0 ? '+' : ''}${data.summary.total_pnl_pct.toFixed(2)}%`} color={data.summary.total_pnl >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'} />
             <SummaryCard icon={Briefcase} label="Win / Loss" value={`${gainers}W / ${losers}L`} sub={`${sortedStocks.length} total stocks`} color="bg-amber-500/10" />
           </div>
+
+          {health && (
+            <div className="rounded-lg border border-border/50 bg-panel">
+              <div role="button" tabIndex={0} onClick={() => setShowHealth(v => !v)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowHealth(v => !v); } }}
+                className="w-full flex items-center justify-between px-4 py-2.5 cursor-pointer">
+                <div className="flex items-center gap-2 text-xs font-semibold"><Shield className="w-3.5 h-3.5 text-muted-foreground" /> Book health
+                  <span className="text-[10px] font-normal text-muted-foreground">{health.effective_names} effective names of {health.names} • top-5 {health.top5_pct}% • top-10 {health.top10_pct}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {health.flags.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">{health.flags.length} flag{health.flags.length !== 1 ? 's' : ''}</span>}
+                  {showHealth ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+                </div>
+              </div>
+              {showHealth && (
+                <div className="px-4 pb-4 grid grid-cols-1 lg:grid-cols-3 gap-4 border-t border-border/50 pt-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">By sector</div>
+                    {health.sectors.slice(0, 7).map(sct => (
+                      <div key={sct.name} className="flex items-center gap-2 text-[11px] mb-1">
+                        <span className="w-28 truncate text-muted-foreground" title={sct.name}>{sct.name}</span>
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden"><div className={`h-full rounded-full ${sct.pct > 25 ? 'bg-amber-500/70' : 'bg-primary/60'}`} style={{ width: `${Math.min(100, sct.pct)}%` }} /></div>
+                        <span className="font-mono w-10 text-right">{sct.pct.toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">By size</div>
+                    {health.sizes.map(sz => (
+                      <div key={sz.name} className="flex items-center gap-2 text-[11px] mb-1">
+                        <span className="w-28 truncate text-muted-foreground">{sz.name}</span>
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-primary/60 rounded-full" style={{ width: `${Math.min(100, sz.pct)}%` }} /></div>
+                        <span className="font-mono w-10 text-right">{sz.pct.toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Flags</div>
+                    {health.flags.length === 0 ? <div className="text-[11px] text-emerald-400">No structural flags</div> :
+                      health.flags.map((f, i) => <div key={i} className="text-[11px] text-amber-300/90 flex gap-1.5"><span>•</span><span>{f}</span></div>)}
+                    {(health.tiny_positions.length > 0 || health.illiquid.length > 0) && (
+                      <div className="text-[10px] text-muted-foreground pt-1 leading-snug">
+                        {health.tiny_positions.length > 0 && <div>Under ₹5k: {health.tiny_positions.join(', ')}</div>}
+                        {health.illiquid.length > 0 && <div>Illiquid: {health.illiquid.join(', ')}</div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {(data.summary.cash > 0 || data.summary.used_margin > 0) && (
             <div className="flex items-center gap-4 text-xs text-muted-foreground bg-muted/30 rounded-lg px-4 py-2">

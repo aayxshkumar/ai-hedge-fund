@@ -1,6 +1,6 @@
 import re
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import asyncio
@@ -691,6 +691,52 @@ async def analyze_detailed(request_data: DetailedAnalyzeRequest, db: Session = D
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Detailed analysis failed: {str(e)}")
+
+
+@router.get("/persona-scores")
+async def persona_scores(tickers: str, quant: bool = True):
+    """Deterministic persona pre-signals for comma-separated tickers (no LLM calls)."""
+    from src.analysis.persona_scores import score_tickers
+    tk = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not tk:
+        raise HTTPException(400, "tickers required")
+    tk = [t if t.endswith((".NS", ".BO")) else f"{t}.NS" for t in tk][:30]
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: score_tickers(tk, include_quant=quant))
+
+
+_screen_state: dict = {"running": False, "done": 0, "total": 0, "error": None}
+
+
+def _run_screen_sync():
+    from src.analysis.quality_screen import run_screen
+    _screen_state.update(running=True, done=0, error=None)
+    try:
+        def prog(i, n):
+            _screen_state["done"], _screen_state["total"] = i, n
+        run_screen(progress=prog)
+    except Exception as e:
+        _screen_state["error"] = str(e)
+    finally:
+        _screen_state["running"] = False
+
+
+@router.post("/quality-screen/run")
+async def quality_screen_run(background_tasks: BackgroundTasks):
+    """Score the NSE universe on quality/price/trend (background, cached a week)."""
+    if _screen_state["running"]:
+        return {"running": True, **_screen_state}
+    loop = asyncio.get_running_loop()
+    background_tasks.add_task(loop.run_in_executor, None, _run_screen_sync)
+    return {"running": True, "message": "screen started"}
+
+
+@router.get("/quality-screen")
+async def quality_screen_get(limit: int = 50, min_score: int = 0):
+    from src.analysis.quality_screen import load_screen
+    data = load_screen(max_age=365 * 24 * 3600)
+    rows = [r for r in (data or {}).get("rows", []) if r["score"] >= min_score][:limit] if data else []
+    return {"as_of": (data or {}).get("as_of"), "universe": (data or {}).get("universe"), "rows": rows, **_screen_state}
 
 
 @router.get("/llm-status")
