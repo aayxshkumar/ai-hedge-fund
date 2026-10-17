@@ -185,6 +185,7 @@ def fund_metrics(nav: pd.DataFrame) -> dict:
 # ── Classification ──────────────────────────────────────────────────────────
 
 BUCKETS = [
+    ("Debt / Liquid", r"\bsdl\b|g-sec|gsec|gilt|\bbond\b|debt|liquid|overnight|money market|treasury|crisil ibx|psu bond|duration|credit risk|floater|corporate bond|banking (and|&) psu|target maturity"),
     ("International", r"international|overseas|global|nasdaq|taiwan|europe|us equity|s&p|china|japan|fof.*(global|overseas|emerging market)"),
     ("Sectoral / Thematic", r"sectoral|thematic|healthcare|pharma|infrastructure|defence|defense|banking|psu|energy|technology|digital|consumption|capital market|manufacturing|transport|esg|business cycle"),
     ("Index - Factor / Smart Beta", r"value index|momentum|quality|low vol|alpha|equal weight|enhanced value|factor"),
@@ -195,9 +196,24 @@ BUCKETS = [
     ("Flexi / Multi / Focused", r"flexi|multi ?cap|focused|large & mid|large and mid"),
     ("ELSS", r"elss|tax saver"),
     ("Hybrid", r"hybrid|balanced|arbitrage|asset allocation|dynamic asset"),
-    ("Debt / Liquid", r"debt|liquid|overnight|gilt|bond|duration|money market|credit|corporate|banking and psu debt|floater"),
     ("Gold / Commodity", r"gold|silver|commodit"),
 ]
+
+
+THEMES = [("healthcare", r"health|pharma"), ("banking/financial", r"bank|bfsi|financial"), ("defence", r"defen[cs]e"),
+          ("infrastructure", r"infra|manufactur|capital goods|transport|logistic"), ("technology", r"\bit\b|tech|digital|innovation"),
+          ("consumption", r"consum|fmcg"), ("energy", r"energy|power|oil"), ("psu", r"\bpsu\b|cpse"), ("capital markets", r"capital market"),
+          ("commodities", r"metal|mining|commodit"), ("esg", r"esg"), ("business cycle", r"business cycle"), ("other", r".")]
+
+
+def theme_of(name: str) -> str:
+    """Sub-theme of a sectoral/thematic fund, so it is ranked against like funds."""
+    import re as _re
+    n = name.lower()
+    for t, pat in THEMES:
+        if _re.search(pat, n):
+            return t
+    return "other"
 
 
 def classify(category: str, name: str) -> str:

@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from app.backend.routes.algo_state import state as _state
 from src.mf.analyzer import build_mf_portfolio, fetch_nav_history, review_prompt
+from src.mf.rules_review import cap_lookthrough, rules_review
+from src.mf.universe import best_in_bucket, build_universe, find, load_universe, rank_fund
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/mutual-funds", tags=["mutual-funds"])
@@ -61,6 +63,13 @@ def _build(refresh: bool = False) -> dict:
         raw = _kite().mf_holdings()
         portfolio = build_mf_portfolio(raw)
         portfolio["equity"] = _equity_summary()
+        universe = load_universe()
+        for f in portfolio["funds"]:
+            f["rank"] = rank_fund(universe, f)
+        portfolio["cap_lookthrough"] = cap_lookthrough(portfolio["funds"])
+        portfolio["universe_as_of"] = (universe or {}).get("as_of")
+        if universe is None and not _universe_state["running"]:
+            threading.Thread(target=_build_universe_sync, daemon=True).start()
         _cache["portfolio"], _cache["at"] = portfolio, time.time()
         return portfolio
 
@@ -92,6 +101,63 @@ async def get_fund_nav(scheme_code: int, days: int = 1095):
 def pd_days(days: int):
     import pandas as pd
     return pd.Timedelta(days=days)
+
+
+# ── Universe (peer ranking) and rules-based review ──────────────────────────
+
+_universe_state: dict = {"running": False, "done": 0, "total": 0, "error": None}
+
+
+def _build_universe_sync():
+    _universe_state.update(running=True, done=0, error=None)
+    try:
+        def prog(i, n):
+            _universe_state["done"], _universe_state["total"] = i, n
+        build_universe(progress=prog)
+        _cache["at"] = 0.0          # holdings get re-ranked on next request
+    except Exception as e:
+        log.exception("universe build failed")
+        _universe_state["error"] = str(e)
+    finally:
+        _universe_state["running"] = False
+
+
+@router.post("/universe/refresh")
+async def universe_refresh(background_tasks: BackgroundTasks):
+    if _universe_state["running"]:
+        return {"running": True, **_universe_state}
+    loop = asyncio.get_running_loop()
+    background_tasks.add_task(loop.run_in_executor, None, _build_universe_sync)
+    return {"running": True, "message": "universe build started"}
+
+
+@router.get("/universe")
+async def universe_get(bucket: str | None = None, q: str | None = None, n: int = 10):
+    """Best funds per role (by 3y CAGR / vol), or a name search, from the cached universe."""
+    u = load_universe(max_age=365 * 24 * 3600)
+    if u is None:
+        return {"as_of": None, "rows": [], **_universe_state}
+    held = {f["scheme_code"] for f in ((_cache["portfolio"] or {}).get("funds") or [])}
+    if q:
+        rows = find(u, q, n)
+    elif bucket:
+        rows = best_in_bucket(u, bucket, n, exclude=held)
+    else:
+        buckets = sorted({r["bucket"] for r in u["rows"]})
+        rows = {b: best_in_bucket(u, b, 5, exclude=held) for b in buckets}
+    return {"as_of": u.get("as_of"), "count": u.get("count"), "rows": rows, **_universe_state}
+
+
+@router.get("/rules-review")
+async def rules_review_get(profile: str = "growth", refresh: bool = False):
+    """Deterministic construction review (no LLM): rules over the holdings and their peer ranks."""
+    loop = asyncio.get_running_loop()
+    portfolio = await loop.run_in_executor(None, lambda: _build(refresh))
+    universe = load_universe(max_age=365 * 24 * 3600)
+    review = rules_review(portfolio, universe, profile=profile)
+    review["timestamp"] = datetime.now().isoformat(timespec="seconds")
+    review["universe_as_of"] = (universe or {}).get("as_of")
+    return review
 
 
 # ── LLM review ──────────────────────────────────────────────────────────────
