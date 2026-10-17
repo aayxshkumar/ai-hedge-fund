@@ -32,6 +32,12 @@ def call_llm(
         An instance of the specified Pydantic model
     """
     
+    # Capture mode (persona scoring without an LLM): record the facts the
+    # agent would have reasoned over and hand back its default signal.
+    if _capture["active"]:
+        _capture["records"].append({"agent": agent_name, "prompt": _prompt_text(prompt)})
+        return default_factory() if default_factory else create_default_response(pydantic_model)
+
     # Extract model configuration if state is provided and agent_name is available
     if state and agent_name:
         model_name, model_provider = get_agent_model_config(state, agent_name)
@@ -170,6 +176,33 @@ def extract_json_from_response(content: str) -> dict | None:
             continue
     print("Error extracting JSON from response: no parseable JSON object found")
     return None
+
+
+_capture: dict = {"active": False, "records": []}
+
+
+def _prompt_text(prompt) -> str:
+    try:
+        msgs = getattr(prompt, "messages", None) or (prompt.to_messages() if hasattr(prompt, "to_messages") else None)
+        if msgs:
+            return "\n".join(str(getattr(m, "content", m)) for m in msgs)
+    except Exception:
+        pass
+    return str(prompt)
+
+
+class capture_prompts:
+    """Context manager: while active, call_llm does not call any model; it
+    records each prompt (which carries the agent's deterministic analysis) and
+    returns the agent's default. Used by src/analysis/persona_scores."""
+
+    def __enter__(self):
+        _capture["active"], _capture["records"] = True, []
+        return _capture["records"]
+
+    def __exit__(self, *exc):
+        _capture["active"] = False
+        return False
 
 
 def content_text(response) -> str:

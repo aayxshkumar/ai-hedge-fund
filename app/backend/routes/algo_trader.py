@@ -1200,7 +1200,13 @@ def _run_analyst_review_sync(mode: str = "quick"):
             _state.analyst_review_running = False
             return
 
-        if mode == "quick":
+        if mode == "personas":
+            # Zero LLM calls: every persona's deterministic pre-signal, consensus per stock.
+            from src.analysis.persona_scores import score_tickers
+            _state.push_event({"type": "review", "msg": f"Scoring {len(tickers)} stocks with {12} persona rule-sets (no LLM)"})
+            scored = score_tickers(tickers)
+            verdicts = {t: scored[t]["verdict"] for t in tickers}
+        elif mode == "quick":
             # Batched desk review: ~10 calls for the whole book instead of ~800.
             from src.agents.portfolio_desk import run_portfolio_desk
             book_value = sum(h.last_price * h.quantity for h in holdings if h.quantity > 0) or 1
@@ -1380,14 +1386,48 @@ def _review_scheduler_loop():
     log.info("Review scheduler stopped")
 
 
+@router.get("/portfolio/health")
+async def portfolio_health():
+    """Portfolio-level diagnostics: concentration, sector/size mix, tiny, illiquid and deep-loser lines."""
+    from src.analysis.book_health import book_health
+    from src.analysis.quality_screen import cached_info
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timedelta
+    loop = asyncio.get_running_loop()
+    holdings = await loop.run_in_executor(None, _state.executor.get_holdings)
+    rows = [{"ticker": h.ticker, "quantity": h.quantity, "avg_price": h.average_price, "last_price": h.last_price} for h in holdings if h.quantity > 0]
+    end = datetime.now().strftime("%Y-%m-%d"); start = (datetime.now() - timedelta(days=380)).strftime("%Y-%m-%d")
+
+    def enrich(r):
+        sym = f"{r['ticker']}.NS"
+        info = cached_info(sym)
+        try:
+            df = _history_with_fallback(sym, start, end)
+            if df is not None and not df.empty:
+                r["turnover_cr"] = float((df["Close"] * df["Volume"]).tail(60).mean() / 1e7)
+                r["ret_1y"] = float(df["Close"].iloc[-1] / df["Close"].iloc[0] - 1)
+        except Exception:
+            pass
+        return r["ticker"], info
+
+    def run():
+        with ThreadPoolExecutor(4) as ex:
+            info = dict(ex.map(enrich, rows))
+        return book_health(rows, info)
+
+    return await loop.run_in_executor(None, run)
+
+
 @router.post("/portfolio/analyst-review")
 async def trigger_analyst_review(background_tasks: BackgroundTasks, mode: str = "quick"):
-    """Trigger a portfolio review. mode=quick (default) runs the batched desk review;
-    mode=full runs every persona agent on every holding (slow, ~800 LLM calls)."""
+    """Trigger a portfolio review. mode=personas runs every analyst's rule-based
+    scoring with no LLM at all; mode=quick (default) runs the batched desk review
+    (~10 LLM calls); mode=full runs every persona agent with its LLM write-up
+    (slow, ~800 LLM calls)."""
     if _state.analyst_review_running:
         return {"message": "Analyst review already in progress", "running": True}
-    if mode not in ("quick", "full"):
-        raise HTTPException(400, "mode must be 'quick' or 'full'")
+    if mode not in ("quick", "full", "personas"):
+        raise HTTPException(400, "mode must be 'personas', 'quick' or 'full'")
 
     loop = asyncio.get_running_loop()
     background_tasks.add_task(loop.run_in_executor, None, _run_analyst_review_sync, mode)

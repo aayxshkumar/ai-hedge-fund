@@ -37,6 +37,7 @@ PENNY_HISTORY_FILE = OUTPUTS_DIR / "penny_scanned_tickers.json"
 MAX_PRICE = 100
 MIN_PRICE = 3
 MIN_AVG_VOLUME = 30_000
+MIN_AVG_TRADED_VALUE = 5_000_000   # ₹50 L/day: below this a fill moves the price
 MIN_DATA_DAYS = 25
 PREFILTER_TOP_N = 6
 AI_BATCH_SIZE = 4
@@ -162,6 +163,9 @@ def _technical_screen(ticker: str) -> TechnicalCandidate | None:
         avg_vol_raw = volume.iloc[-21:-1].mean() if len(volume) > 21 else volume.mean()
         avg_vol = float(avg_vol_raw) if not np.isnan(avg_vol_raw) else 0
         if avg_vol < MIN_AVG_VOLUME:
+            return None
+        traded_value = float((close.iloc[-21:-1] * volume.iloc[-21:-1]).mean()) if len(close) > 21 else float((close * volume).mean())
+        if np.isnan(traded_value) or traded_value < MIN_AVG_TRADED_VALUE:
             return None
 
         last_vol = float(volume.iloc[-1])
@@ -314,6 +318,9 @@ def run_penny_scan(
 
     # Exclude tickers already scanned
     universe = [t for t in ALL_INDIAN_STOCKS if t not in previously_scanned]
+    # Prefer the NSE line when a name is listed on both exchanges: deeper book, cleaner data.
+    nse_bases = {t[:-3] for t in universe if t.endswith(".NS")}
+    universe = [t for t in universe if not (t.endswith(".BO") and t[:-3] in nse_bases)]
     random.shuffle(universe)
     log.info("Penny universe: %d stocks remaining (%d previously scanned)", len(universe), len(previously_scanned))
     _progress("init", f"{len(universe)} stocks in universe, {len(previously_scanned)} already scanned")

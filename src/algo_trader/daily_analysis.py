@@ -451,7 +451,14 @@ def run_discovery_scan(
         log.info("No new stocks to discover — universe exhausted")
         return existing or {"generated_at": _now_ist(), "strong_buys": [], "all_analyzed": [], "total_scans": 0}
 
-    picked = random.sample(universe, n)
+    # Prefer the quality screen's best-scored names; fall back to random when no fresh screen exists.
+    try:
+        from src.analysis.quality_screen import top_candidates
+        screened = [t.replace(".NS", "") for t in top_candidates(n=n * 3, exclude=exclude) if t.replace(".NS", "") in universe]
+    except Exception:
+        screened = []
+    picked = screened[:n] if len(screened) >= n else random.sample(universe, n)
+    log.info("Discovery picks (%s): %s", "screen" if len(screened) >= n else "random", picked)
     tickers = [f"{t}.NS" for t in picked]
     names = [t.replace('.NS', '') for t in tickers]
     log.info("Discovery tickers: %s", ", ".join(names))

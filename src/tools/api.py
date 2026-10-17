@@ -1,6 +1,8 @@
 import datetime
 import os
 import pandas as pd
+import threading
+import time
 import yfinance as yf
 
 from src.data.cache import get_cache
@@ -51,7 +53,23 @@ def _resolve_ticker(ticker: str) -> str:
     return ticker
 
 
+_last_call = [0.0]
+_throttle_lock = threading.Lock()
+YF_MIN_INTERVAL = float(os.getenv("YF_MIN_INTERVAL", "0.35"))   # ~3 requests/s keeps Yahoo from 429ing
+
+
+def _throttle():
+    """Space out Yahoo calls. Every fetch function below goes through
+    _get_yf_ticker first, so this is the single choke point."""
+    with _throttle_lock:
+        wait = _last_call[0] + YF_MIN_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call[0] = time.monotonic()
+
+
 def _get_yf_ticker(resolved: str) -> yf.Ticker:
+    _throttle()
     if resolved not in _yf_ticker_objects:
         if len(_yf_ticker_objects) >= _YF_CACHE_MAX:
             oldest = next(iter(_yf_ticker_objects))
