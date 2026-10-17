@@ -32,6 +32,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useNotifications } from '@/contexts/notifications-context';
+import { LlmStatusBanner, useLlmStatus } from '@/components/shared/llm-status';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -2332,6 +2333,7 @@ export function StockAnalysis() {
   const [hideResults, setHideResults] = useState(false);
 
   const { addNotification } = useNotifications();
+  const llmStatus = useLlmStatus();
 
   // SSE listener for analyst view changes and other events
   useEffect(() => {
@@ -2464,6 +2466,7 @@ export function StockAnalysis() {
             AI-powered detailed analysis using Claude — technical, fundamental, and multi-analyst perspectives
           </p>
         </div>
+        <LlmStatusBanner status={llmStatus} />
 
         <div className="rounded-xl border bg-card p-5 space-y-4">
           <div>
@@ -2561,13 +2564,6 @@ export function StockAnalysis() {
           </button>
         </div>
 
-        {/* ── Live Sections ── */}
-        <PennyScanSection />
-        <DiscoverySection />
-        <DailyAnalysisSection />
-
-        {/* ── Saved Analysis Library ── */}
-        <AnalysisLibrary />
 
         {error && (
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>
@@ -2590,6 +2586,13 @@ export function StockAnalysis() {
             ))}
           </div>
         )}
+        {/* ── Live Sections ── */}
+        <PennyScanSection />
+        <DiscoverySection />
+        <DailyAnalysisSection />
+
+        {/* ── Saved Analysis Library ── */}
+        <AnalysisLibrary />
       </div>
     </div>
   );

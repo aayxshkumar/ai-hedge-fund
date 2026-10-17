@@ -2,7 +2,6 @@ import { useTabsContext, TabType } from '@/contexts/tabs-context';
 import { TabService } from '@/services/tab-service';
 import { cn } from '@/lib/utils';
 import {
-  BookOpen,
   Briefcase,
   PieChart,
   Settings,
@@ -23,7 +22,6 @@ const NAV_ITEMS: NavItem[] = [
   { type: 'portfolio', icon: <Briefcase size={18} />, label: 'Portfolio', title: 'My Portfolio', create: () => TabService.createPortfolioTab() },
   { type: 'stock-analysis', icon: <TrendingUp size={18} />, label: 'Analysis', title: 'AI Stock Analysis', create: () => TabService.createStockAnalysisTab() },
   { type: 'mutual-funds', icon: <PieChart size={18} />, label: 'Funds', title: 'Mutual Funds', create: () => TabService.createMutualFundsTab() },
-  { type: 'tradebook', icon: <BookOpen size={18} />, label: 'Tradebook', title: 'Trade Journal', create: () => TabService.createTradebookTab() },
 ];
 
 export function SideNav() {
