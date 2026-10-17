@@ -4,6 +4,7 @@ import json
 import time
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
+from src.utils import llm_status
 from src.utils.progress import progress
 from src.graph.state import AgentState
 
@@ -64,11 +65,19 @@ def call_llm(
             method="json_mode",
         )
 
+    # Inside a usage-limit window every call fails identically: skip the
+    # network round-trip and return the default straight away.
+    if llm_status.is_limited():
+        if agent_name:
+            progress.update_status(agent_name, None, "LLM usage limit reached - skipped")
+        return default_factory() if default_factory else create_default_response(pydantic_model)
+
     # Call the LLM with retries
     for attempt in range(max_retries):
         try:
             # Call the LLM
             result = llm.invoke(prompt)
+            llm_status.note_success()
 
             if via_tool_call:
                 calls = getattr(result, "tool_calls", None) or []
@@ -87,6 +96,12 @@ def call_llm(
                 return result
 
         except Exception as e:
+            if llm_status.note_error(e):
+                # Usage window exhausted: retrying cannot help.
+                print(f"LLM usage limit reached; skipping retries: {str(e)[:160]}")
+                if agent_name:
+                    progress.update_status(agent_name, None, "LLM usage limit reached")
+                return default_factory() if default_factory else create_default_response(pydantic_model)
             if agent_name:
                 progress.update_status(agent_name, None, f"Error - retry {attempt + 1}/{max_retries}")
 
@@ -117,6 +132,10 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
             default_values[field_name] = 0
         elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ == dict:
             default_values[field_name] = {}
+        elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ in (list, set, tuple):
+            default_values[field_name] = []
+        elif field.annotation == bool:
+            default_values[field_name] = False
         else:
             # For other types (like Literal), try to use the first allowed value
             if hasattr(field.annotation, "__args__"):

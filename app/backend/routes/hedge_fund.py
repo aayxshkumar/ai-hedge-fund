@@ -693,6 +693,13 @@ async def analyze_detailed(request_data: DetailedAnalyzeRequest, db: Session = D
         raise HTTPException(status_code=500, detail=f"Detailed analysis failed: {str(e)}")
 
 
+@router.get("/llm-status")
+async def llm_status_endpoint():
+    """Whether the configured LLM gateway is currently usable (usage-window limits etc.)."""
+    from src.utils.llm_status import snapshot
+    return {**snapshot(), **dict(zip(("model_name", "model_provider"), _default_model()))}
+
+
 @router.get("/analysis-history")
 async def get_analysis_history(limit: int = 20):
     """Return saved analysis history for review."""
