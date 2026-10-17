@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -210,14 +211,12 @@ async def get_zerodha_login_url():
     return {"login_url": url}
 
 
-@router.post("/zerodha/callback")
-async def zerodha_callback(req: KiteTokenRequest):
-    """Exchange request_token for access_token after the user completes login."""
+def _exchange_request_token(request_token: str) -> dict:
+    """Exchange a Kite request_token for an access_token and persist it."""
     state = _get_algo_state()
-    result = state.executor.generate_session(req.request_token)
-
+    result = state.executor.generate_session(request_token)
     if result.get("error"):
-        raise HTTPException(400, result["error"])
+        return result
 
     access_token = result.get("access_token", "")
     if access_token:
@@ -225,6 +224,65 @@ async def zerodha_callback(req: KiteTokenRequest):
 
     state.push_event({"type": "zerodha", "msg": f"Logged in as {result.get('user_name', 'user')}"})
     return result
+
+
+@router.post("/zerodha/callback")
+async def zerodha_callback(req: KiteTokenRequest):
+    """Exchange request_token for access_token after the user completes login."""
+    result = _exchange_request_token(req.request_token)
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+_CALLBACK_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Zerodha login</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;
+align-items:center;justify-content:center;height:100vh;margin:0}}
+.card{{text-align:center;padding:2rem;border:1px solid #1f2937;border-radius:12px;max-width:420px}}
+.ok{{color:#34d399}}.err{{color:#f87171}}small{{color:#9ca3af}}</style></head>
+<body><div class="card"><h2 class="{cls}">{title}</h2><p>{detail}</p>
+<small id="hint">This window will close automatically&hellip;</small></div>
+<script>
+  var payload = {payload};
+  try {{ if (window.opener) window.opener.postMessage(payload, "*"); }} catch (e) {{}}
+  setTimeout(function () {{
+    window.close();
+    document.getElementById("hint").textContent = "You can close this tab and return to the app.";
+  }}, 800);
+</script></body></html>"""
+
+
+@router.get("/zerodha/callback", response_class=HTMLResponse)
+async def zerodha_callback_redirect(request_token: str | None = None, status: str | None = None,
+                                    error: str | None = None):
+    """Kite Connect redirect target. Set this URL as the app's Redirect URL in the
+    Kite developer console; the popup exchanges the token here, notifies the
+    opener window and closes itself, so nothing has to be copied by hand."""
+    import html
+    import json
+
+    if not request_token or (status and status != "success"):
+        msg = error or "Zerodha did not return a request_token."
+        result: dict[str, Any] = {"error": msg}
+    else:
+        try:
+            result = _exchange_request_token(request_token)
+        except HTTPException as e:
+            result = {"error": str(e.detail)}
+        except Exception as e:  # never show a traceback in the popup
+            log.exception("Zerodha callback failed")
+            result = {"error": str(e)}
+
+    ok = not result.get("error")
+    payload = {"type": "kite-login", "ok": ok,
+               "user_name": result.get("user_name"), "error": result.get("error")}
+    return HTMLResponse(_CALLBACK_HTML.format(
+        cls="ok" if ok else "err",
+        title="Logged in to Zerodha" if ok else "Zerodha login failed",
+        detail=html.escape(f"Welcome, {result.get('user_name') or 'user'}." if ok else str(result["error"])),
+        payload=json.dumps(payload),
+    ))
 
 
 # ── Trading config ────────────────────────────────────────────────────
