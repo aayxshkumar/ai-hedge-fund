@@ -358,7 +358,28 @@ def run_penny_scan(
     _save_scanned_history(history)
 
     candidates.sort(key=lambda c: c.score, reverse=True)
+    # Momentum alone picks the wrong penny stocks (the best charts are usually
+    # the worst businesses). Score the top technical names with every analyst's
+    # rule-based signal (no LLM) and let the persona net score pick who goes to
+    # the AI stage; technical score only breaks ties.
     top_candidates = candidates[:PREFILTER_TOP_N]
+    try:
+        from src.analysis.persona_scores import score_tickers
+        pool = candidates[:max(PREFILTER_TOP_N * 4, 20)]
+        _progress("persona_scoring", f"Rule-based persona scoring on {len(pool)} technical candidates", 0, len(pool))
+        scored = score_tickers([c.ticker for c in pool], include_quant=True)
+        def _net(c):
+            r = scored.get(c.ticker) or {}
+            return (r.get("bullish", 0) - r.get("bearish", 0), c.score)
+        ranked = sorted(pool, key=_net, reverse=True)
+        kept = [c for c in ranked if (scored.get(c.ticker) or {}).get("bullish", 0) > (scored.get(c.ticker) or {}).get("bearish", 0)]
+        top_candidates = (kept or ranked)[:PREFILTER_TOP_N]
+        for c in top_candidates:
+            r = scored.get(c.ticker) or {}
+            c.reasoning = f"personas {r.get('bullish', 0)} bull / {r.get('bearish', 0)} bear; " + c.reasoning
+        log.info("Persona-ranked penny picks: %s", [(c.ticker, _net(c)) for c in top_candidates])
+    except Exception as e:
+        log.warning("Persona scoring unavailable, falling back to technical ranking: %s", e)
 
     if not top_candidates:
         log.info("No technical penny candidates found this run")

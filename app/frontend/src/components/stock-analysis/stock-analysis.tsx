@@ -2331,6 +2331,16 @@ export function StockAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, DetailedResult> | null>(null);
   const [hideResults, setHideResults] = useState(false);
+  const [personaLoading, setPersonaLoading] = useState(false);
+  const [personaScores, setPersonaScores] = useState<Record<string, any> | null>(null);
+  const runPersonas = useCallback(async () => {
+    if (selectedTickers.length === 0) return;
+    setPersonaLoading(true); setPersonaScores(null);
+    try {
+      const r = await fetch(`${API_BASE}/hedge-fund/persona-scores?tickers=${encodeURIComponent(selectedTickers.join(','))}`);
+      if (r.ok) setPersonaScores(await r.json());
+    } catch { /* ignore */ } finally { setPersonaLoading(false); }
+  }, [selectedTickers]);
 
   const { addNotification } = useNotifications();
   const llmStatus = useLlmStatus();
@@ -2552,6 +2562,14 @@ export function StockAnalysis() {
           </div>
 
           <button
+            onClick={runPersonas}
+            disabled={personaLoading || selectedTickers.length === 0}
+            title="Every analyst's rule-based scoring (Buffett, Graham, Lynch, Damodaran, Burry…) — no LLM, ~10 s per stock"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg border bg-background hover:bg-accent/30 disabled:opacity-50 transition-colors cursor-pointer"
+          >
+            {personaLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Scoring with 16 analyst rule-sets…</> : <>Persona scores (no AI)</>}
+          </button>
+          <button
             onClick={handleAnalyze}
             disabled={loading || selectedTickers.length === 0}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer"
@@ -2569,6 +2587,31 @@ export function StockAnalysis() {
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>
         )}
 
+        {personaScores && (
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold">Persona scores</h2>
+            {Object.entries(personaScores).map(([tk, row]: [string, any]) => (
+              <div key={tk} className="rounded-xl border bg-card p-4 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-sm font-semibold">{tk.replace('.NS', '')} <span className="text-xs text-muted-foreground font-normal ml-2">{row.verdict?.action} • confidence {Math.round((row.verdict?.confidence || 0) * 100)}%</span></div>
+                  <div className="text-[11px] font-mono"><span className="text-emerald-400">{row.bullish} bull</span> / <span className="text-red-400">{row.bearish} bear</span> / <span className="text-muted-foreground">{row.neutral} neutral</span>{row.no_data ? <span className="text-muted-foreground"> / {row.no_data} no data</span> : null}</div>
+                </div>
+                <div className="text-xs text-muted-foreground">{row.verdict?.reasoning}</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                  {Object.entries(row.personas || {}).map(([name, p]: [string, any]) => (
+                    <div key={name} className={`rounded-md border px-2 py-1.5 text-[11px] ${p.signal === 'bullish' ? 'border-emerald-500/30 bg-emerald-500/5' : p.signal === 'bearish' ? 'border-red-500/30 bg-red-500/5' : 'border-border/50 bg-muted/20'}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium capitalize">{name.replace(/_/g, ' ')}</span>
+                        <span className="font-mono text-[10px]">{p.signal ?? 'no data'}{p.score != null && p.max ? ` ${Math.round(p.score)}/${Math.round(p.max)}` : ''}{p.mos != null ? ` · MoS ${Math.round(p.mos * 100)}%` : ''}</span>
+                      </div>
+                      {p.details?.[0] && <div className="text-muted-foreground mt-0.5 leading-snug line-clamp-2">{p.details[0]}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {results && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">

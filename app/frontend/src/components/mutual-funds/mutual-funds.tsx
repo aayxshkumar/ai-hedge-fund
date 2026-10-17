@@ -18,6 +18,7 @@ interface Fund {
   xirr: number | null; weight: number; history_years?: number;
   ret_1m?: number | null; ret_3m?: number | null; ret_6m?: number | null; ret_1y?: number | null; cagr_3y?: number | null; cagr_5y?: number | null;
   vol_1y?: number | null; sharpe_1y?: number | null; max_dd_3y?: number | null; sparkline?: { d: string; v: number }[];
+  rank?: { peers?: number; cagr_3y_pct?: number; cagr_3y_median?: number; ratio_pct?: number; max_dd_3y_pct?: number };
 }
 interface Agg { name: string; current: number; invested: number; count: number; weight: number; pnl_pct: number | null }
 interface MFPortfolio {
@@ -27,12 +28,16 @@ interface MFPortfolio {
   weighted: { ret_1y: number | null; cagr_3y: number | null; vol_1y: number | null; max_dd_3y: number | null; xirr: number | null };
   funds: Fund[];
   equity?: { count: number; invested: number; current: number; pnl: number; pnl_pct: number | null } | null;
+  cap_lookthrough?: { large: number; mid: number; small: number; international: number; other: number };
+  universe_as_of?: string | null;
 }
 interface Review {
   health_score: number; headline: string; overall_assessment: string; strengths: string[]; concerns: string[]; redundancies: string[];
   diversification_notes: string; next_steps: { title: string; rationale: string; priority: 'high' | 'medium' | 'low' }[];
   fund_notes: { fund: string; role: string; flag: 'core' | 'satellite' | 'overlap' | 'review'; note: string }[];
   timestamp: string;
+  source?: 'rules' | 'llm';
+  profile?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -61,6 +66,7 @@ const PRIORITY_STYLE: Record<string, string> = {
   low: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
 };
 
+const ord = (n: number) => `${n}${[11, 12, 13].includes(n % 100) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] || 'th'}`;
 function normalizeName(s: string) { return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(direct|plan|growth|fund|the)\b/g, '').trim(); }
 function noteFor(review: Review | null, fund: Fund) {
   if (!review) return null;
@@ -167,7 +173,7 @@ function HealthRing({ score }: { score: number }) {
   );
 }
 
-function ReviewPanel({ review, running, error, onRun, startedAt }: { review: Review | null; running: boolean; error: string | null; onRun: () => void; startedAt: string | null }) {
+function ReviewPanel({ review, running, error, onRun, startedAt, title, subtitle, extra }: { review: Review | null; running: boolean; error: string | null; onRun?: () => void; startedAt: string | null; title?: string; subtitle?: string; extra?: React.ReactNode }) {
   const [showAll, setShowAll] = useState(false);
   if (!review && !running && !error) {
     return (
@@ -193,17 +199,23 @@ function ReviewPanel({ review, running, error, onRun, startedAt }: { review: Rev
             {review && <HealthRing score={review.health_score} />}
             <div>
               <div className="text-sm font-semibold flex items-center gap-2">
-                <Bot className="h-4 w-4 text-violet-400" /> AI Review
+                <Bot className="h-4 w-4 text-violet-400" /> {title || 'AI Review'}
                 {review && <span className="text-[10px] font-normal text-muted-foreground">{new Date(review.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
+                {subtitle && <span className="text-[10px] font-normal text-muted-foreground">• {subtitle}</span>}
               </div>
               {review && <div className="text-sm text-primary/90 mt-1 max-w-3xl">{review.headline}</div>}
               {running && <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Reviewing {startedAt ? `(started ${new Date(startedAt).toLocaleTimeString()})` : ''}…</div>}
               {error && <div className="text-xs text-red-400 mt-1">{error}</div>}
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={onRun} disabled={running} className="gap-1.5 text-xs">
-            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} {review ? 'Re-run' : 'Run'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {extra}
+            {onRun && (
+              <Button variant="outline" size="sm" onClick={onRun} disabled={running} className="gap-1.5 text-xs">
+                {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} {review ? 'Re-run' : 'Run'}
+              </Button>
+            )}
+          </div>
         </div>
 
         {review && (
@@ -269,6 +281,12 @@ function FundRow({ f, note, expanded, onToggle }: { f: Fund; note: Review['fund_
             <div className="text-xs font-medium truncate" title={f.fund}>{f.fund.replace(/ - DIRECT PLAN$/i, '').replace(/ FUND$/i, ' Fund')}</div>
             <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 truncate">
               <span>{f.bucket}</span><span className="opacity-40">•</span><span className="truncate">{f.amc}</span>
+              {f.rank?.cagr_3y_pct !== undefined && (
+                <span className={`ml-1 px-1.5 rounded border text-[9px] ${f.rank.cagr_3y_pct >= 67 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : f.rank.cagr_3y_pct < 33 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'}`}
+                  title={`3-year CAGR percentile among ${f.rank.peers} ${f.bucket} funds (median ${((f.rank.cagr_3y_median ?? 0) * 100).toFixed(1)}%)`}>
+                  {ord(f.rank.cagr_3y_pct)} pct of {f.rank.peers}
+                </span>
+              )}
               {note && <span className={`ml-1 px-1.5 rounded border text-[9px] uppercase ${FLAG_STYLE[note.flag]}`}>{note.flag}</span>}
             </div>
           </div>
@@ -329,6 +347,8 @@ export function MutualFunds() {
   const [reviewRunning, setReviewRunning] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewStarted, setReviewStarted] = useState<string | null>(null);
+  const [rules, setRules] = useState<Review | null>(null);
+  const [profile, setProfile] = useState<'growth' | 'balanced'>('growth');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>('weight');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -352,7 +372,15 @@ export function MutualFunds() {
     } catch { /* ignore */ }
   }, []);
 
+  const loadRules = useCallback(async (p: 'growth' | 'balanced') => {
+    try {
+      const r = await fetch(`${API_BASE}/mutual-funds/rules-review?profile=${p}`);
+      if (r.ok) setRules(await r.json());
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => { load(); loadReview(); }, [load, loadReview]);
+  useEffect(() => { if (data) loadRules(profile); }, [data, profile, loadRules]);
   useEffect(() => {
     if (!reviewRunning) return;
     const id = window.setInterval(loadReview, 4000);
@@ -447,6 +475,19 @@ export function MutualFunds() {
                   <Stat label="Volatility (1Y)" value={pctPlain(data.weighted.vol_1y)} sub="annualised" />
                   <Stat label="Max drawdown (3Y)" value={pctPlain(data.weighted.max_dd_3y)} valueClass="text-red-400" />
                 </div>
+                {data.cap_lookthrough && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Look-through market cap (estimated from fund roles)</div>
+                    <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-muted">
+                      {([['large', '#3b82f6'], ['mid', '#8b5cf6'], ['small', '#ec4899'], ['international', '#f97316'], ['other', '#64748b']] as const).map(([k, c]) => (
+                        <div key={k} style={{ width: `${data.cap_lookthrough![k]}%`, background: c }} title={`${k} ${data.cap_lookthrough![k]}%`} />
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 text-[10px] text-muted-foreground mt-1">
+                      <span>Large {data.cap_lookthrough.large}%</span><span>Mid {data.cap_lookthrough.mid}%</span><span>Small {data.cap_lookthrough.small}%</span><span>Intl {data.cap_lookthrough.international}%</span>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">By AMC</div>
                   <div className="space-y-1">
@@ -463,7 +504,17 @@ export function MutualFunds() {
             </Card>
           </div>
 
-          <ReviewPanel review={review} running={reviewRunning} error={reviewError} onRun={runReview} startedAt={reviewStarted} />
+          <ReviewPanel review={rules} running={false} error={null} startedAt={null} title="Construction review (rules, no AI)"
+            subtitle={rules?.profile ? `${rules.profile} profile • every fund ranked against its category peers` : undefined}
+            extra={(
+              <div className="flex items-center rounded-md border border-border/60 overflow-hidden text-[10px]">
+                {(['growth', 'balanced'] as const).map((p, i) => (
+                  <button key={p} onClick={() => setProfile(p)} title={p === 'growth' ? 'Long horizon: broad/large+mid core, mid+small up to 50%, thematic ≤ 20%' : 'Core ≥ 45%, mid+small ≤ 35%, thematic ≤ 15%'}
+                    className={`px-2 py-1.5 cursor-pointer transition-colors ${i ? 'border-l border-border/60' : ''} ${profile === p ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>{p}</button>
+                ))}
+              </div>
+            )} />
+          <ReviewPanel review={review} running={reviewRunning} error={reviewError} onRun={runReview} startedAt={reviewStarted} title="AI review" subtitle="LLM narrative on the same numbers; optional" />
 
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Sort:</span>
@@ -481,7 +532,7 @@ export function MutualFunds() {
           </div>
           <div className="space-y-2">
             {funds.map(f => (
-              <FundRow key={f.isin + (f.folio || '')} f={f} note={noteFor(review, f)} expanded={expanded === f.isin} onToggle={() => setExpanded(expanded === f.isin ? null : f.isin)} />
+              <FundRow key={f.isin + (f.folio || '')} f={f} note={noteFor(review, f) || noteFor(rules, f)} expanded={expanded === f.isin} onToggle={() => setExpanded(expanded === f.isin ? null : f.isin)} />
             ))}
           </div>
           <p className="text-[10px] text-muted-foreground">Returns are NAV-based (direct plan, growth) and do not include your cash-flow timing; XIRR comes from Zerodha when available. Educational analysis, not personalised financial advice.</p>
