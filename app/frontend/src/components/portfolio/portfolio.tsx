@@ -93,6 +93,13 @@ interface BookHealth {
   tiny_positions: string[]; illiquid: string[]; deep_losers: [string, number][]; flags: string[];
 }
 
+interface LegendLens { score: number; max: number; pass: boolean; detail?: string }
+interface LegendScore { ticker: string; passed: number; of: number; lenses: Record<string, LegendLens>; red_flag?: { reason: string; date?: string } | null; notes?: string[] }
+interface LegendsData {
+  scores: Record<string, LegendScore>;
+  rules: { checks: { rule: string; value: string | number; pass: boolean }[]; passed: number; of: number; strong: string[]; weak: string[]; red: string[]; etf_pct: number };
+}
+
 interface PortfolioData {
   stocks: PortfolioStock[];
   summary: PortfolioSummary;
@@ -265,8 +272,8 @@ const DETAIL_TABS: { key: DetailTab; label: string; icon: any }[] = [
   { key: 'risk', label: 'Risk', icon: Shield },
 ];
 
-function StockRow({ stock, verdict, expanded, onToggle }: {
-  stock: PortfolioStock; verdict: AnalystVerdict | null; expanded: boolean; onToggle: () => void;
+function StockRow({ stock, verdict, legend, expanded, onToggle }: {
+  stock: PortfolioStock; verdict: AnalystVerdict | null; legend?: LegendScore | null; expanded: boolean; onToggle: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>('overview');
   const pnlPositive = stock.pnl >= 0;
@@ -310,6 +317,12 @@ function StockRow({ stock, verdict, expanded, onToggle }: {
           <div className="text-[10px] text-muted-foreground mt-0.5">
             {stock.quantity} shares @ {formatINR(stock.avg_price, 2)} avg
             {verdict && verdict.confidence > 0 && <span className="ml-2 text-zinc-500">AI conf: {(verdict.confidence * 100).toFixed(0)}%</span>}
+            {legend && (legend.red_flag
+              ? <span className="ml-2 px-1.5 rounded border text-[9px] bg-red-500/10 text-red-400 border-red-500/20" title={legend.red_flag.reason}>RED FLAG</span>
+              : <span className={`ml-2 px-1.5 rounded border text-[9px] ${legend.passed >= 3 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : legend.passed === 0 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'}`}
+                  title={Object.entries(legend.lenses || {}).map(([k, l]) => `${k}: ${l.pass ? '✓' : '·'} ${l.score}/${l.max} — ${l.detail || ''}`).join('\n')}>
+                  {legend.passed}/{legend.of} legends
+                </span>)}
             {verdict?.signal_breakdown && (
               <span className="ml-1 text-zinc-600 text-[9px]">
                 ({verdict.signal_breakdown.bullish}B/{verdict.signal_breakdown.bearish}S/{verdict.signal_breakdown.neutral}N)
@@ -617,6 +630,9 @@ export function Portfolio() {
   const [reviewMode, setReviewMode] = useState<'personas' | 'quick' | 'full'>('personas');
   const [health, setHealth] = useState<BookHealth | null>(null);
   const [showHealth, setShowHealth] = useState(true);
+  const [legends, setLegends] = useState<LegendsData | null>(null);
+  const [legendsLoading, setLegendsLoading] = useState(false);
+  const [showLegends, setShowLegends] = useState(true);
   const [data, setData] = useState<PortfolioData | null>(null);
   const [review, setReview] = useState<AnalystReviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -723,6 +739,16 @@ export function Portfolio() {
   useEffect(() => {
     fetch(`${API_BASE}/algo-trader/portfolio/health`).then(r => r.ok ? r.json() : null).then(h => { if (h) setHealth(h); }).catch(() => {});
   }, [lastRefreshed]);
+
+  const loadLegends = useCallback(async () => {
+    setLegendsLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/algo-trader/portfolio/legends`);
+      if (r.ok) setLegends(await r.json());
+    } catch { /* ignore */ } finally { setLegendsLoading(false); }
+  }, []);
+
+  const getLegend = (stock: PortfolioStock): LegendScore | null => legends?.scores[`${stock.ticker}.NS`] || legends?.scores[stock.ticker] || null;
 
   const getVerdict = (stock: PortfolioStock): AnalystVerdict | null => {
     return verdicts[stock.yf_ticker] || verdicts[stock.ticker] || verdicts[`${stock.ticker}.NS`] || null;
@@ -939,6 +965,40 @@ export function Portfolio() {
             </div>
           )}
 
+          <div className="rounded-lg border border-border/50 bg-panel">
+            <div role="button" tabIndex={0} onClick={() => setShowLegends(v => !v)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowLegends(v => !v); } }}
+              className="w-full flex items-center justify-between px-4 py-2.5 cursor-pointer">
+              <div className="flex items-center gap-2 text-xs font-semibold"><Shield className="w-3.5 h-3.5 text-muted-foreground" /> Legends' lenses
+                <span className="text-[10px] font-normal text-muted-foreground">QGLP • Coffee Can • SMILE • Dhandho • buy-and-hold conviction, plus portfolio-construction rules — no AI</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {legends && <span className={`text-[10px] px-1.5 py-0.5 rounded border ${legends.rules.passed >= 7 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : legends.rules.passed >= 4 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>{legends.rules.passed}/{legends.rules.of} rules</span>}
+                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); loadLegends(); }} disabled={legendsLoading} className="h-6 gap-1 text-[10px] px-2">
+                  {legendsLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}{legends ? 'Re-run' : 'Run'}
+                </Button>
+                {showLegends ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </div>
+            </div>
+            {showLegends && legends && (
+              <div className="px-4 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-4 border-t border-border/50 pt-3">
+                <div className="space-y-1">
+                  {legends.rules.checks.map((c, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[11px]">
+                      <span className={`mt-0.5 shrink-0 w-10 text-center rounded text-[9px] font-semibold ${c.pass ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{c.pass ? 'PASS' : 'FAIL'}</span>
+                      <span className="text-muted-foreground"><span className="text-foreground">{c.rule}</span> — {String(c.value)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1.5 text-[11px]">
+                  {legends.rules.red.length > 0 && <div className="text-red-400"><strong>Red flags:</strong> {legends.rules.red.join(', ')} — fails every lens regardless of numbers.</div>}
+                  <div><span className="text-emerald-400 font-medium">Pass ≥ 3 lenses:</span> <span className="text-muted-foreground">{legends.rules.strong.join(', ') || 'none'}</span></div>
+                  <div><span className="text-amber-400 font-medium">Pass 0 lenses:</span> <span className="text-muted-foreground">{legends.rules.weak.join(', ') || 'none'}</span></div>
+                  <div className="text-[10px] text-muted-foreground pt-1">Each row below shows its lens count; expand a stock for the per-lens detail.</div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {(data.summary.cash > 0 || data.summary.used_margin > 0) && (
             <div className="flex items-center gap-4 text-xs text-muted-foreground bg-muted/30 rounded-lg px-4 py-2">
               <span>Available Cash: <strong className="text-primary">{formatINR(data.summary.cash)}</strong></span>
@@ -984,6 +1044,7 @@ export function Portfolio() {
                   key={`${stock.ticker}-${stock.type}`}
                   stock={stock}
                   verdict={getVerdict(stock)}
+                  legend={getLegend(stock)}
                   expanded={expandedTicker === `${stock.ticker}-${stock.type}`}
                   onToggle={() => setExpandedTicker(expandedTicker === `${stock.ticker}-${stock.type}` ? null : `${stock.ticker}-${stock.type}`)}
                 />
