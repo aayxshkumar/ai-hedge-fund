@@ -1386,6 +1386,23 @@ def _review_scheduler_loop():
     log.info("Review scheduler stopped")
 
 
+@router.get("/portfolio/legends")
+async def portfolio_legends():
+    """Every holding through the legend lenses plus the portfolio-construction rules."""
+    from src.analysis.legend_lenses import portfolio_rules, score_many
+    from src.analysis.quality_screen import cached_info
+    loop = asyncio.get_running_loop()
+    holdings = await loop.run_in_executor(None, _state.executor.get_holdings)
+    rows = [{"ticker": h.ticker, "value": h.last_price * h.quantity} for h in holdings if h.quantity > 0]
+
+    def run():
+        info = {r["ticker"]: cached_info(f"{r['ticker']}.NS") for r in rows}
+        scores = score_many([f"{r['ticker']}.NS" for r in rows], sectors={f"{r['ticker']}.NS": (info[r["ticker"]] or {}).get("sector") for r in rows})
+        return {"scores": scores, "rules": portfolio_rules(rows, scores, info)}
+
+    return await loop.run_in_executor(None, run)
+
+
 @router.get("/portfolio/health")
 async def portfolio_health():
     """Portfolio-level diagnostics: concentration, sector/size mix, tiny, illiquid and deep-loser lines."""

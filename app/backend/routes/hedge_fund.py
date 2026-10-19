@@ -739,6 +739,18 @@ async def quality_screen_get(limit: int = 50, min_score: int = 0):
     return {"as_of": (data or {}).get("as_of"), "universe": (data or {}).get("universe"), "rows": rows, **_screen_state}
 
 
+@router.get("/legend-lenses")
+async def legend_lenses(tickers: str):
+    """QGLP / Coffee Can / SMILE / Dhandho / conviction screens for comma-separated tickers (no LLM)."""
+    from src.analysis.legend_lenses import score_many
+    tk = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not tk:
+        raise HTTPException(400, "tickers required")
+    tk = [t if t.endswith((".NS", ".BO")) else f"{t}.NS" for t in tk][:40]
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: score_many(tk))
+
+
 @router.get("/llm-status")
 async def llm_status_endpoint():
     """Whether the configured LLM gateway is currently usable (usage-window limits etc.)."""
