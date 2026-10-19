@@ -151,6 +151,16 @@ def _technical_screen(ticker: str) -> TechnicalCandidate | None:
             return None
 
         df.columns = [str(c).strip().capitalize() for c in df.columns]
+        # During market hours yfinance's last daily bar is today's partial
+        # session: its volume is a fraction of a full day and makes every
+        # relative-volume and momentum reading wrong. Drop it until the close.
+        try:
+            now_ist = datetime.now(IST)
+            last_day = df.index[-1].date() if hasattr(df.index[-1], "date") else None
+            if last_day == now_ist.date() and (now_ist.hour, now_ist.minute) < (15, 30) and len(df) > MIN_DATA_DAYS:
+                df = df.iloc[:-1]
+        except Exception:
+            pass
         required = {"Close", "High", "Low", "Volume"}
         if not required.issubset(set(df.columns)):
             return None
