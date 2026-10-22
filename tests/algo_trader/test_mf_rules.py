@@ -42,3 +42,14 @@ def test_lookthrough_uses_index_names():
     lt = cap_lookthrough([{"fund": "NIFTY NEXT 50 INDEX", "bucket": "Index - Broad", "current": 50},
                           {"fund": "NIFTY MIDCAP 150 INDEX", "bucket": "Index - Broad", "current": 50}])
     assert lt == {"large": 50.0, "mid": 50.0, "small": 0.0, "international": 0.0, "other": 0.0}
+
+
+def test_household_gold_counts_toward_ballast():
+    funds = [{"fund": "MIDCAP INDEX", "bucket": "Index - Broad", "current": 70},
+             {"fund": "SMALL CAP", "bucket": "Small Cap", "current": 30}]
+    book = _book(funds); book["current"] = 100
+    bare = rules_review(book, None, profile="growth")
+    assert any("ballast" in c.lower() for c in bare["concerns"])
+    with_gold = rules_review(book, None, profile="growth", household_ballast={"value": 8, "label": "demat gold"})
+    assert not any("ballast" in c.lower() for c in with_gold["concerns"])
+    assert any("demat gold" in s for s in with_gold["strengths"])
