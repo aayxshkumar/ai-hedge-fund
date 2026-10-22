@@ -54,7 +54,10 @@ def cap_lookthrough(funds: list[dict]) -> dict:
     return {"large": round(large, 1), "mid": round(mid, 1), "small": round(small, 1), "international": round(intl, 1), "other": round(other, 1)}
 
 
-def rules_review(portfolio: dict, universe: dict | None, profile: str = "growth") -> dict:
+def rules_review(portfolio: dict, universe: dict | None, profile: str = "growth",
+                 household_ballast: dict | None = None) -> dict:
+    """`household_ballast` = {"value": ₹, "label": "..."}: non-equity assets held outside the fund book
+    (gold/silver ETFs in the demat, sovereign gold bonds) that count toward the ballast rule."""
     P = PROFILES.get(profile, PROFILES["growth"])
     funds = portfolio["funds"]
     by_bucket = {b["name"]: b for b in portfolio["by_bucket"]}
@@ -146,10 +149,20 @@ def rules_review(portfolio: dict, universe: dict | None, profile: str = "growth"
                           "rationale": f"Ranks at the {_ord(r['cagr_3y_pct'])} percentile of {r['peers']} {peer_label}{f['bucket']} funds. Peers with better 3y CAGR/vol: "
                                        + ", ".join(f"{b['name']} ({(b.get('cagr_3y') or 0)*100:.1f}%)" for b in better)})
 
-    # 9. ballast
+    # 9. ballast — fund-side hybrid/debt/gold plus anything the household holds outside the fund book
     ballast = w("Hybrid") + w("Debt / Liquid") + w("Gold / Commodity")
+    hb_value = float((household_ballast or {}).get("value") or 0)
+    fund_total = float(portfolio.get("current") or sum(f.get("current", 0) for f in funds) or 0)
+    if hb_value > 0 and fund_total > 0:
+        combined = fund_total + hb_value
+        ballast = (ballast / 100 * fund_total + hb_value) / combined * 100
+        notes_ballast = f"{(household_ballast or {}).get('label') or 'non-equity assets outside the fund book'} (₹{hb_value:,.0f}) counted"
+    else:
+        notes_ballast = ""
+    if ballast >= P["ballast_min"] and notes_ballast:
+        strengths.append(f"Ballast {ballast:.1f}% of the household book once {notes_ballast} — above the {P['ballast_min']}% floor.")
     if ballast < P["ballast_min"]:
-        concerns.append(f"No non-equity ballast (hybrid/multi-asset/gold) — a −35% mid/small year has nothing to rebalance from.")
+        concerns.append(f"Non-equity ballast is {ballast:.1f}% ({notes_ballast or 'no hybrid/multi-asset/gold in the fund book'}) — a −35% mid/small year has little to rebalance from.")
         picks = find(universe, r"multi asset", 3)
         steps.append({"title": "Add a multi-asset fund as ballast instead of large-cap", "priority": "medium",
                       "rationale": "Keeps the growth tilt while adding something that rebalances into equity after a fall. Best by 3y CAGR/vol: "

@@ -4,6 +4,7 @@ LLM review. Read-only with respect to the broker."""
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import logging
 import threading
@@ -148,13 +149,33 @@ async def universe_get(bucket: str | None = None, q: str | None = None, n: int =
     return {"as_of": u.get("as_of"), "count": u.get("count"), "rows": rows, **_universe_state}
 
 
+# Gold/silver ETF tickers and sovereign gold bonds — anchored so GOLDIAM (a jeweller) does not match.
+_BALLAST_RE = re.compile(r"^(?:[A-Z]*GOLD(?:BEES|CASE|IETF|ETF|1|SHARE)?|SETFGOLD|[A-Z]*SILVER(?:BEES|IETF|ETF|ADD)?|TATSILV|SGB[A-Z0-9]*)(?:-[A-Z]+)?$", re.I)
+
+
+def _household_ballast() -> dict | None:
+    """Gold/silver ETFs and sovereign gold bonds sitting in the demat: ballast the fund rules should count."""
+    try:
+        rows = _kite().holdings()
+    except Exception:
+        return None
+    value = sum((h.get("quantity", 0) + h.get("t1_quantity", 0)) * (h.get("last_price") or 0)
+                for h in rows if _BALLAST_RE.search(h.get("tradingsymbol", "")))
+    if value <= 0:
+        return None
+    names = sorted({h["tradingsymbol"] for h in rows if _BALLAST_RE.search(h.get("tradingsymbol", ""))})
+    return {"value": round(value, 2), "label": "demat gold/silver (" + ", ".join(names) + ")"}
+
+
 @router.get("/rules-review")
 async def rules_review_get(profile: str = "growth", refresh: bool = False):
     """Deterministic construction review (no LLM): rules over the holdings and their peer ranks."""
     loop = asyncio.get_running_loop()
     portfolio = await loop.run_in_executor(None, lambda: _build(refresh))
     universe = load_universe(max_age=365 * 24 * 3600)
-    review = rules_review(portfolio, universe, profile=profile)
+    household = await loop.run_in_executor(None, _household_ballast)
+    review = rules_review(portfolio, universe, profile=profile, household_ballast=household)
+    review["household_ballast"] = household
     review["timestamp"] = datetime.now().isoformat(timespec="seconds")
     review["universe_as_of"] = (universe or {}).get("as_of")
     return review
