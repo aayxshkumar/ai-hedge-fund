@@ -111,7 +111,7 @@ def _signal(name: str, f: dict, score, mx, mos):
 
 
 def score_tickers(tickers: list[str], personas: list[str] | None = None, include_quant: bool = True,
-                  lookback_days: int = 90, tech: dict[str, dict] | None = None) -> dict:
+                  lookback_days: int = 90, tech: dict[str, dict] | None = None, sectors: dict[str, str] | None = None) -> dict:
     """Return {ticker: {"personas": {name: {signal, score, max, mos, details, no_data}},
     "bullish": n, "bearish": n, "neutral": n, "no_data": n}}."""
     from src.utils.analysts import ANALYST_CONFIG
@@ -164,12 +164,27 @@ def score_tickers(tickers: list[str], personas: list[str] | None = None, include
         sigs = [p.get("signal") for p in row["personas"].values()]
         row["bullish"] = sigs.count("bullish"); row["bearish"] = sigs.count("bearish")
         row["neutral"] = sigs.count("neutral"); row["no_data"] = sum(1 for p in row["personas"].values() if p.get("no_data"))
-        row["verdict"] = consensus_verdict(row, tech=(tech or {}).get(t))
+        row["verdict"] = consensus_verdict(row, tech=(tech or {}).get(t), ticker=t, sector=(sectors or {}).get(t))
     return out
 
 
 QUANT_WEIGHT = 0.5            # the four quant analysts share one vote's worth each at half weight
 MIN_CONVICTION = 0.25         # a bare-threshold signal still counts, but not as much as a 9/10 score
+LENDER_HINTS = ("BANK", "BK", "FIN", "SFB", "FUNDS", "CAPITAL", "CREDIT", "NBFC", "HOUSING", "AMC", "IREDA", "PFC", "RECLTD", "INSUR", "LIFE",
+                "VYSYA", "NAM-INDIA", "IIFL", "ANGELONE", "MUTHOOT", "MANAPPURAM", "BAJFINANCE", "SHRIRAM", "LICHSG", "CHOLA", "PNBHOUSING")
+LENDER_SECTORS = ("bank", "credit", "lending", "nbfc", "asset management", "capital markets", "mortgage", "insurance", "financial services", "brokerage")
+# Personas whose own scoring reads EBITDA, free cash flow, gross margin or R&D - numbers a
+# bank's statements do not carry. On a lender their bearish/bullish call is half a vote.
+LENDER_MISFIT = {"michael_burry", "charlie_munger", "phil_fisher", "cathie_wood", "mohnish_pabrai", "aswath_damodaran", "bill_ackman"}
+LENDER_MISFIT_WEIGHT = 0.5
+
+
+def is_lender(ticker: str | None, sector: str | None = None) -> bool:
+    """Banks, NBFCs, AMCs, brokers, insurers: by sector/industry string when known, else by ticker hint."""
+    if sector and any(k in sector.lower() for k in LENDER_SECTORS):
+        return True
+    t = (ticker or "").upper().replace(".NS", "").replace(".BO", "")
+    return any(h in t for h in LENDER_HINTS) and "GOLDIAM" not in t
 
 
 def _conviction(p: dict) -> float:
@@ -188,8 +203,9 @@ def _conviction(p: dict) -> float:
     return max(MIN_CONVICTION, min(1.0, abs(r - 0.5) * 2))
 
 
-def _weighted(row: dict) -> tuple[float, float, dict]:
+def _weighted(row: dict, ticker: str | None = None, sector: str | None = None) -> tuple[float, float, dict]:
     quant = {q.replace("_analyst", "") for q in QUANT}
+    lender = is_lender(ticker or row.get("ticker"), sector)
     num = den = 0.0
     weights = {}
     for name, p in row["personas"].items():
@@ -197,6 +213,8 @@ def _weighted(row: dict) -> tuple[float, float, dict]:
         if sig not in ("bullish", "bearish", "neutral"):
             continue
         w = (QUANT_WEIGHT if name in quant else 1.0) * _conviction(p)
+        if lender and name in LENDER_MISFIT:
+            w *= LENDER_MISFIT_WEIGHT
         weights[name] = round(w, 3)
         den += w
         num += w * (1 if sig == "bullish" else -1 if sig == "bearish" else 0)
@@ -226,7 +244,7 @@ def _tape(action: str, tech: dict | None) -> tuple[str, str | None]:
     return action, None
 
 
-def consensus_verdict(row: dict, tech: dict | None = None) -> dict:
+def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = None, sector: str | None = None) -> dict:
     """Meta-style verdict from persona pre-signals (same shape the Portfolio page reads).
 
     Votes are conviction-weighted (see _conviction) with the four quant analysts
@@ -236,12 +254,13 @@ def consensus_verdict(row: dict, tech: dict | None = None) -> dict:
     bull, bear = row["bullish"], row["bearish"]
     total = bull + bear + row["neutral"]
     raw = (bull - bear) / total if total else 0.0
-    wscore, wsum, weights = _weighted(row)
+    wscore, wsum, weights = _weighted(row, ticker, sector)
+    lender = is_lender(ticker or row.get("ticker"), sector)
     quant_names = [q.replace("_analyst", "") for q in QUANT]
     personas_total = sum(1 for n in row["personas"] if n not in quant_names)
     breakdown = {"bullish": bull, "bearish": bear, "neutral": row["neutral"], "total": total,
                  "bullish_pct": round(bull / total * 100, 1) if total else 0, "bearish_pct": round(bear / total * 100, 1) if total else 0,
-                 "weighted_score": round(wscore, 4), "weight_sum": round(wsum, 2)}
+                 "weighted_score": round(wscore, 4), "weight_sum": round(wsum, 2), "lender_fit": lender}
     signals = {n: {"signal": p.get("signal") or "no data", "weight": weights.get(n, 0.0),
                    "confidence": p.get("confidence", round((p.get("score") or 0) / (p.get("max") or 1) * 100)),
                    "reasoning": "; ".join(p.get("details") or [])[:400]} for n, p in row["personas"].items()}
@@ -282,6 +301,8 @@ def consensus_verdict(row: dict, tech: dict | None = None) -> dict:
             reasoning += f". Bear: {', '.join(b.replace('_', ' ').title() for b in bears[:4])}"
         if row["no_data"]:
             reasoning += f". {row['no_data']} analysts had no financial data"
+        if lender:
+            reasoning += ". Lender: EBITDA/FCF-model personas at half weight"
         if tape:
             reasoning += f". Tape: {tape}"
     out = {"action": action, "confidence": round(conf, 3), "score": round(score, 4), "raw_score": round(raw, 4), "reasoning": reasoning,

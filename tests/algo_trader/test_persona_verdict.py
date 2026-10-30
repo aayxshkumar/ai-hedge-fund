@@ -75,3 +75,19 @@ def test_red_flag_and_no_data_unchanged():
     assert consensus_verdict(row)["action"] == "Red flag"
     nd = {f"p{i}": {"signal": None, "details": [], "no_data": True} for i in range(12)}
     assert consensus_verdict(_row(nd))["action"] == "No data"
+
+
+def test_lender_halves_ebitda_model_personas():
+    from src.analysis.persona_scores import is_lender
+    assert is_lender("MAHABANK.NS") and is_lender("SBIFUNDS") and is_lender("CANBK.NS") and not is_lender("GOLDIAM.NS") and not is_lender("COALINDIA.NS")
+    assert is_lender("XYZ.NS", sector="Banks - Regional") and is_lender("ABC.NS", sector="Asset Management") and not is_lender("ABC.NS", sector="Steel")
+    personas = {"michael_burry": _p("bearish", 1.0), "charlie_munger": _p("bearish", 1.0), "phil_fisher": _p("bearish", 1.0),
+                "warren_buffett": _p("bullish", 8.5), "ben_graham": _p("bullish", 8.5), "rakesh_jhunjhunwala": _p("bullish", 7.5)}
+    row = _row(personas)
+    industrial = consensus_verdict(row, ticker="XYZ.NS")
+    bank = consensus_verdict(row, ticker="XYZBANK.NS")
+    assert industrial["signal_breakdown"]["weighted_score"] < 0 < bank["signal_breakdown"]["weighted_score"]
+    assert bank["signal_breakdown"]["lender_fit"] is True and "Lender" in bank["reasoning"]
+    # Burry 1/10 -> conviction 0.8, halved on a lender = 0.4; Buffett 8.5/10 -> conviction 0.7, full weight
+    assert bank["analyst_signals"]["michael_burry"]["weight"] == 0.4 and bank["analyst_signals"]["warren_buffett"]["weight"] == 0.7
+    assert industrial["analyst_signals"]["michael_burry"]["weight"] == 0.8
