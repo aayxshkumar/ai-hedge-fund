@@ -111,7 +111,7 @@ def _signal(name: str, f: dict, score, mx, mos):
 
 
 def score_tickers(tickers: list[str], personas: list[str] | None = None, include_quant: bool = True,
-                  lookback_days: int = 90) -> dict:
+                  lookback_days: int = 90, tech: dict[str, dict] | None = None) -> dict:
     """Return {ticker: {"personas": {name: {signal, score, max, mos, details, no_data}},
     "bullish": n, "bearish": n, "neutral": n, "no_data": n}}."""
     from src.utils.analysts import ANALYST_CONFIG
@@ -164,58 +164,129 @@ def score_tickers(tickers: list[str], personas: list[str] | None = None, include
         sigs = [p.get("signal") for p in row["personas"].values()]
         row["bullish"] = sigs.count("bullish"); row["bearish"] = sigs.count("bearish")
         row["neutral"] = sigs.count("neutral"); row["no_data"] = sum(1 for p in row["personas"].values() if p.get("no_data"))
-        row["verdict"] = consensus_verdict(row)
+        row["verdict"] = consensus_verdict(row, tech=(tech or {}).get(t))
     return out
 
 
-def consensus_verdict(row: dict) -> dict:
-    """Meta-style verdict from persona pre-signals (same shape the Portfolio page reads)."""
+QUANT_WEIGHT = 0.5            # the four quant analysts share one vote's worth each at half weight
+MIN_CONVICTION = 0.25         # a bare-threshold signal still counts, but not as much as a 9/10 score
+
+
+def _conviction(p: dict) -> float:
+    """How far a persona's own score sits from its bullish/bearish threshold, 0.25..1.
+
+    A persona that scored 7/10 (just across the 0.7 line) carries less weight
+    than one at 9.5/10. Quant analysts expose a 0-100 confidence instead.
+    """
+    if p.get("confidence") is not None and p.get("score") is None:
+        c = _num(p.get("confidence"))
+        return max(MIN_CONVICTION, min(1.0, (c or 50) / 100))
+    sc, mx = _num(p.get("score")), _num(p.get("max"))
+    if sc is None or not mx:
+        return MIN_CONVICTION
+    r = sc / mx
+    return max(MIN_CONVICTION, min(1.0, abs(r - 0.5) * 2))
+
+
+def _weighted(row: dict) -> tuple[float, float, dict]:
+    quant = {q.replace("_analyst", "") for q in QUANT}
+    num = den = 0.0
+    weights = {}
+    for name, p in row["personas"].items():
+        sig = p.get("signal")
+        if sig not in ("bullish", "bearish", "neutral"):
+            continue
+        w = (QUANT_WEIGHT if name in quant else 1.0) * _conviction(p)
+        weights[name] = round(w, 3)
+        den += w
+        num += w * (1 if sig == "bullish" else -1 if sig == "bearish" else 0)
+    return (num / den if den else 0.0), den, weights
+
+
+def _tape(action: str, tech: dict | None) -> tuple[str, str | None]:
+    """Price-trend overlay. Fundamentals pick the name; the tape picks the moment.
+
+    Buy-side verdicts in an established downtrend (well under the 200-EMA and
+    still falling over 20 sessions) are stepped down one notch and told to wait
+    for a base. Sell-side verdicts into an oversold tape keep their action but
+    say to sell into strength. Nothing here upgrades.
+    """
+    if not tech:
+        return action, None
+    rsi, e200, d20, s20 = tech.get("rsi"), tech.get("vs_e200"), tech.get("d20"), tech.get("vs_s20")
+    pos52 = tech.get("pos52")
+    if action in ("Strong Buy", "Buy") and e200 is not None and d20 is not None and e200 < -15 and d20 < -10:
+        return ("Buy" if action == "Strong Buy" else "Hold"), f"downtrend: {e200:+.0f}% vs 200-EMA, {d20:+.0f}% in 20 sessions - wait for a close above the 20-SMA before adding"
+    if action in ("Strong Sell", "Sell") and rsi is not None and rsi < 25:
+        return action, f"oversold (RSI {rsi:.0f}): sell into the next bounce, not at market"
+    if action in ("Strong Buy", "Buy") and rsi is not None and pos52 is not None and rsi > 75 and pos52 > 95:
+        return action, f"extended (RSI {rsi:.0f}, {pos52}% of 52-wk range): stagger the entry"
+    if action == "Hold" and s20 is not None and rsi is not None and rsi < 30 and s20 < -8:
+        return action, f"washed out (RSI {rsi:.0f}, {s20:+.0f}% vs 20-SMA): do not sell into this"
+    return action, None
+
+
+def consensus_verdict(row: dict, tech: dict | None = None) -> dict:
+    """Meta-style verdict from persona pre-signals (same shape the Portfolio page reads).
+
+    Votes are conviction-weighted (see _conviction) with the four quant analysts
+    at half weight, disagreement lowers confidence, and an optional technical
+    snapshot (rsi, vs_e200, vs_s20, d20, pos52) applies the tape overlay.
+    """
     bull, bear = row["bullish"], row["bearish"]
     total = bull + bear + row["neutral"]
-    score = (bull - bear) / total if total else 0.0
-    personas_total = sum(1 for n in row["personas"] if n not in [q.replace("_analyst", "") for q in QUANT])
+    raw = (bull - bear) / total if total else 0.0
+    wscore, wsum, weights = _weighted(row)
+    quant_names = [q.replace("_analyst", "") for q in QUANT]
+    personas_total = sum(1 for n in row["personas"] if n not in quant_names)
+    breakdown = {"bullish": bull, "bearish": bear, "neutral": row["neutral"], "total": total,
+                 "bullish_pct": round(bull / total * 100, 1) if total else 0, "bearish_pct": round(bear / total * 100, 1) if total else 0,
+                 "weighted_score": round(wscore, 4), "weight_sum": round(wsum, 2)}
+    signals = {n: {"signal": p.get("signal") or "no data", "weight": weights.get(n, 0.0),
+                   "confidence": p.get("confidence", round((p.get("score") or 0) / (p.get("max") or 1) * 100)),
+                   "reasoning": "; ".join(p.get("details") or [])[:400]} for n, p in row["personas"].items()}
     if row.get("red_flag"):
         # Governance/regulatory event on file: the statements the personas
         # scored may be the very numbers in question. Integrity first.
         rf = row["red_flag"]
         return {"action": "Red flag", "confidence": 1.0, "score": -1.0,
                 "reasoning": f"RED FLAG - {rf.get('reason', 'governance event')} ({rf.get('date', '')}). Analyst scores ({bull} bullish / {bear} bearish) are not actionable.",
-                "signal_breakdown": {"bullish": bull, "bearish": bear, "neutral": row["neutral"], "total": total,
-                                     "bullish_pct": round(bull / total * 100, 1) if total else 0, "bearish_pct": round(bear / total * 100, 1) if total else 0},
-                "analyst_signals": {n: {"signal": p.get("signal") or "no data", "confidence": p.get("confidence", 0), "reasoning": "; ".join(p.get("details") or [])[:400]} for n, p in row["personas"].items()},
-                "source": "persona_scores", "red_flag": rf}
+                "signal_breakdown": breakdown, "analyst_signals": signals, "source": "persona_scores", "red_flag": rf}
     if personas_total and row["no_data"] >= max(6, int(personas_total * 0.6)):
         # ETFs, commodities and unlisted-statement micro-caps: the quant
         # analysts emit "bearish" on empty inputs; that is absence of evidence.
         action, score = "No data", 0.0
-    elif score >= 0.4 and bull >= 6:
-        action = "Strong Buy"
-    elif score >= 0.15 and bull >= 4:
-        action = "Buy"
-    elif bear >= 8 and bull <= 1:
-        action = "Strong Sell"
-    elif score <= -0.2:
-        action = "Sell"
+    elif wscore >= 0.4 and bull >= 5:
+        action, score = "Strong Buy", wscore
+    elif wscore >= 0.15 and bull >= 3:
+        action, score = "Buy", wscore
+    elif wscore <= -0.4 and bear >= 5 and bull <= 1:
+        action, score = "Strong Sell", wscore
+    elif wscore <= -0.15:
+        action, score = "Sell", wscore
     else:
-        action = "Hold"
-    conf = min(1.0, abs(score) + (0.15 if max(bull, bear) / total >= 0.7 else 0.0)) if total else 0.0
-    bulls = [n for n, p in row["personas"].items() if p.get("signal") == "bullish"]
-    bears = [n for n, p in row["personas"].items() if p.get("signal") == "bearish"]
+        action, score = "Hold", wscore
+    dispersion = (min(bull, bear) / max(bull, bear)) if max(bull, bear) else 0.0
+    conf = min(1.0, abs(wscore) * (1 - 0.5 * dispersion) + (0.15 if total and max(bull, bear) / total >= 0.7 else 0.0)) if total else 0.0
+    fund_action = action
+    action, tape = _tape(action, tech) if action != "No data" else (action, None)
+    bulls = sorted((n for n, p in row["personas"].items() if p.get("signal") == "bullish"), key=lambda n: -weights.get(n, 0))
+    bears = sorted((n for n, p in row["personas"].items() if p.get("signal") == "bearish"), key=lambda n: -weights.get(n, 0))
     if action == "No data":
         reasoning = f"{row['no_data']} of {personas_total} analysts had no financial statements (ETF / commodity / unlisted data) - not scored"
     else:
-        reasoning = f"{bull} bullish / {bear} bearish / {row['neutral']} neutral of {total} analysts"
-    if action != "No data":
+        reasoning = f"{bull} bullish / {bear} bearish / {row['neutral']} neutral of {total} analysts, conviction-weighted {wscore:+.2f}"
         if bulls:
             reasoning += f". Bull: {', '.join(b.replace('_', ' ').title() for b in bulls[:4])}"
         if bears:
             reasoning += f". Bear: {', '.join(b.replace('_', ' ').title() for b in bears[:4])}"
         if row["no_data"]:
             reasoning += f". {row['no_data']} analysts had no financial data"
-    return {"action": action, "confidence": round(conf, 3), "score": round(score, 4), "reasoning": reasoning,
-            "signal_breakdown": {"bullish": bull, "bearish": bear, "neutral": row["neutral"], "total": total,
-                                 "bullish_pct": round(bull / total * 100, 1) if total else 0,
-                                 "bearish_pct": round(bear / total * 100, 1) if total else 0},
-            "analyst_signals": {n: {"signal": p.get("signal") or "no data", "confidence": p.get("confidence", round((p.get("score") or 0) / (p.get("max") or 1) * 100)),
-                                    "reasoning": "; ".join(p.get("details") or [])[:400]} for n, p in row["personas"].items()},
-            "source": "persona_scores"}
+        if tape:
+            reasoning += f". Tape: {tape}"
+    out = {"action": action, "confidence": round(conf, 3), "score": round(score, 4), "raw_score": round(raw, 4), "reasoning": reasoning,
+           "signal_breakdown": breakdown, "analyst_signals": signals, "source": "persona_scores"}
+    if tape:
+        out["tape"] = tape
+        out["fundamental_action"] = fund_action
+    return out

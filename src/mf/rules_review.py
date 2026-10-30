@@ -85,11 +85,14 @@ def rules_review(portfolio: dict, universe: dict | None, profile: str = "growth"
 
     # 2. thematic
     th = w("Sectoral / Thematic")
-    if th > P["thematic_max"]:
+    if th > P["thematic_max"] + 1:
         score -= min(20, int(th - P["thematic_max"]))
-        concerns.append(f"Sectoral/thematic is {th:.0f}% across {cnt('Sectoral / Thematic')} funds (cap {P['thematic_max']}%).")
-        steps.append({"title": f"Cut thematic from {th:.0f}% toward {P['thematic_max']}%", "priority": "high",
+        concerns.append(f"Sectoral/thematic is {th:.1f}% across {cnt('Sectoral / Thematic')} funds (cap {P['thematic_max']}%).")
+        steps.append({"title": f"Cut thematic from {th:.1f}% to under {P['thematic_max']}%", "priority": "high",
                       "rationale": "Themes are timing bets layered on the market; keep at most two, each a deliberate size."})
+    elif th > P["thematic_max"]:
+        # Within a point of the cap: at the ceiling, not over it. No step, no penalty - just no new thematic money.
+        concerns.append(f"Sectoral/thematic is at the cap ({th:.1f}% across {cnt('Sectoral / Thematic')} funds, cap {P['thematic_max']}%): no new thematic money.")
 
     # 3. mid + small
     ms = w("Mid Cap") + w("Small Cap") + (w("Index - Broad") * 0.4)

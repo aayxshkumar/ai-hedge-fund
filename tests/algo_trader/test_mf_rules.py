@@ -53,3 +53,17 @@ def test_household_gold_counts_toward_ballast():
     with_gold = rules_review(book, None, profile="growth", household_ballast={"value": 8, "label": "demat gold"})
     assert not any("ballast" in c.lower() for c in with_gold["concerns"])
     assert any("demat gold" in s for s in with_gold["strengths"])
+
+
+
+def test_thematic_at_the_cap_is_a_note_not_a_cut():
+    # 20.1% thematic for a growth profile (cap 20): a note, no "cut from 20% toward 20%" step
+    book = _book([{"fund": "NIFTY 50 INDEX", "bucket": "Index - Broad", "current": 79.9},
+                  {"fund": "DEFENCE INDEX", "bucket": "Sectoral / Thematic", "current": 20.1}])
+    r = rules_review(book, None, profile="growth")
+    assert any("at the cap" in c for c in r["concerns"])
+    assert not any(st["title"].startswith("Cut thematic") for st in r["next_steps"])
+    over = _book([{"fund": "NIFTY 50 INDEX", "bucket": "Index - Broad", "current": 70},
+                  {"fund": "DEFENCE INDEX", "bucket": "Sectoral / Thematic", "current": 30}])
+    r2 = rules_review(over, None, profile="growth")
+    assert any(st["title"] == "Cut thematic from 30.0% to under 20%" for st in r2["next_steps"])

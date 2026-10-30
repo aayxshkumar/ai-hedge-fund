@@ -21,6 +21,8 @@ resignation, governance event) fails every lens regardless of its numbers.
 
 from __future__ import annotations
 
+import re
+
 import json
 import logging
 from datetime import datetime, timedelta
@@ -189,7 +191,8 @@ RULES = {
     "max_position": 10.0,       # % of book
     "max_sector": 25.0,
     "min_position": 2.0,
-    "max_commodity_etf": 10.0,  # Naren: be careful with an asset class that has done extremely well
+    "gold_hedge": (6.0, 8.0),   # gold ETFs/SGBs kept as a hedge (beta ~0.7, held up through the 2026 drawdown); above 8% it stops being a hedge
+    "max_other_etf": 2.0,       # silver and every other commodity/index ETF: Naren - be careful with an asset class that has done extremely well
     "top10_target": (50, 65),   # conviction tiering: top-10 should carry the book
 }
 
@@ -200,7 +203,11 @@ def portfolio_rules(rows: list[dict], lens_scores: dict[str, dict], info: dict[s
     total = sum(r["value"] for r in rows) or 1.0
     w = {r["ticker"]: r["value"] / total * 100 for r in rows}
     ranked = sorted(w.items(), key=lambda kv: -kv[1])
-    etf = sum(v for t, v in w.items() if any(x in t.upper() for x in ("BEES", "ETF", "SILVER", "GOLD")))
+    is_etf = lambda t: any(x in t.upper() for x in ("BEES", "ETF", "SILVER", "GOLD")) and "GOLDIAM" not in t.upper()
+    is_gold = lambda t: is_etf(t) and (re.match(r"^(?:[A-Z]*GOLD(?:BEES|CASE|IETF|ETF|1|SHARE)?|SETFGOLD|SGB[A-Z0-9]*)(?:-[A-Z]+)?$", t.upper().replace(".NS", "").replace(".BO", "")) is not None)
+    gold = sum(v for t, v in w.items() if is_gold(t))
+    other_etf = sum(v for t, v in w.items() if is_etf(t) and not is_gold(t))
+    etf = gold + other_etf
     sectors: dict[str, float] = {}
     for t, v in w.items():
         s = (info.get(t) or {}).get("sector") or ("ETF / Commodity" if any(x in t.upper() for x in ("BEES", "ETF", "SILVER", "GOLD")) else "Unknown")
@@ -216,7 +223,8 @@ def portfolio_rules(rows: list[dict], lens_scores: dict[str, dict], info: dict[s
         {"rule": f"no position > {RULES['max_position']}%", "value": f"{ranked[0][0]} {ranked[0][1]:.1f}%" if ranked else "", "pass": not ranked or ranked[0][1] <= RULES["max_position"]},
         {"rule": f"no position < {RULES['min_position']}%", "value": f"{sum(1 for v in w.values() if v < RULES['min_position'])} below", "pass": all(v >= RULES["min_position"] for v in w.values())},
         {"rule": f"no sector > {RULES['max_sector']}%", "value": f"{top_sector[0]} {top_sector[1]:.0f}%", "pass": top_sector[1] <= RULES["max_sector"]},
-        {"rule": f"commodity/other ETFs <= {RULES['max_commodity_etf']}%", "value": f"{etf:.1f}%", "pass": etf <= RULES["max_commodity_etf"]},
+        {"rule": f"gold hedge {RULES['gold_hedge'][0]:.0f}-{RULES['gold_hedge'][1]:.0f}% of the book", "value": f"{gold:.1f}%", "pass": gold <= RULES["gold_hedge"][1]},
+        {"rule": f"silver / other ETFs <= {RULES['max_other_etf']:.0f}%", "value": f"{other_etf:.1f}%", "pass": other_etf <= RULES["max_other_etf"]},
         {"rule": "top-10 carries 50-65% of the book (conviction tiering)", "value": f"{sum(v for _, v in ranked[:10]):.0f}%", "pass": RULES["top10_target"][0] <= sum(v for _, v in ranked[:10]) <= RULES["top10_target"][1]},
         {"rule": "weight in names passing >= 3 legend lenses >= 50%", "value": f"{conviction_weight:.0f}% in {len(strong)} names", "pass": conviction_weight >= 50},
         {"rule": "no red-flagged names", "value": ", ".join(red) or "none", "pass": not red},
@@ -224,4 +232,4 @@ def portfolio_rules(rows: list[dict], lens_scores: dict[str, dict], info: dict[s
     ]
     return {"checks": checks, "passed": sum(1 for c in checks if c["pass"]), "of": len(checks),
             "weights": dict(ranked), "sectors": dict(sorted(sectors.items(), key=lambda kv: -kv[1])), "strong": strong, "weak": weak, "red": red,
-            "etf_pct": round(etf, 1)}
+            "etf_pct": round(etf, 1), "gold_pct": round(gold, 1), "other_etf_pct": round(other_etf, 1)}
