@@ -55,8 +55,11 @@ def test_tape_downgrades_buy_in_downtrend_but_never_upgrades():
     personas["x"] = _p("neutral", 5.0)
     base = consensus_verdict(_row(personas))
     assert base["action"] == "Strong Buy" and "tape" not in base
-    down = consensus_verdict(_row(personas), tech={"rsi": 28, "vs_e200": -22, "d20": -14, "vs_s20": -6, "pos52": 5})
+    down = consensus_verdict(_row(personas), tech={"rsi": 38, "vs_e200": -22, "d20": -14, "vs_s20": -6, "pos52": 5})
     assert down["action"] == "Buy" and down["fundamental_action"] == "Strong Buy" and "downtrend" in down["tape"]
+    # capitulated (RSI < 30): the verdict stands, with a staged-entry note
+    cap = consensus_verdict(_row(personas), tech={"rsi": 20, "vs_e200": -31, "d20": -15, "vs_s20": -9, "pos52": 0})
+    assert cap["action"] == "Strong Buy" and "capitulated" in cap["tape"] and "thirds" in cap["tape"]
     hold = {f"b{i}": _p("bullish", 7.0) for i in range(2)}
     hold.update({f"s{i}": _p("bearish", 3.0) for i in range(2)})
     up = consensus_verdict(_row(hold), tech={"rsi": 80, "vs_e200": 30, "d20": 15, "vs_s20": 10, "pos52": 99})

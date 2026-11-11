@@ -226,7 +226,8 @@ def _tape(action: str, tech: dict | None) -> tuple[str, str | None]:
 
     Buy-side verdicts in an established downtrend (well under the 200-EMA and
     still falling over 20 sessions) are stepped down one notch and told to wait
-    for a base. Sell-side verdicts into an oversold tape keep their action but
+    for a base - unless the stock has already capitulated (RSI < 30), in which
+    case the verdict stands with a staged-entry note. Sell-side verdicts into an oversold tape keep their action but
     say to sell into strength. Nothing here upgrades.
     """
     if not tech:
@@ -234,6 +235,11 @@ def _tape(action: str, tech: dict | None) -> tuple[str, str | None]:
     rsi, e200, d20, s20 = tech.get("rsi"), tech.get("vs_e200"), tech.get("d20"), tech.get("vs_s20")
     pos52 = tech.get("pos52")
     if action in ("Strong Buy", "Buy") and e200 is not None and d20 is not None and e200 < -15 and d20 < -10:
+        if rsi is not None and rsi < 30:
+            # Capitulation on a name the fundamentals like: the short-term reversal premium sits here.
+            # Oct-Nov 2026 scorecard: scan-day RSI<35 names returned +14% vs +7.8%, and the two Buy
+            # verdicts this branch used to downgrade (RSI 20 and 12) returned +44% and +13.5%.
+            return action, f"capitulated (RSI {rsi:.0f}, {e200:+.0f}% vs 200-EMA): stage the entry in thirds rather than waiting for a base"
         return ("Buy" if action == "Strong Buy" else "Hold"), f"downtrend: {e200:+.0f}% vs 200-EMA, {d20:+.0f}% in 20 sessions - wait for a close above the 20-SMA before adding"
     if action in ("Strong Sell", "Sell") and rsi is not None and rsi < 25:
         return action, f"oversold (RSI {rsi:.0f}): sell into the next bounce, not at market"
