@@ -1,0 +1,91 @@
+{
+ "as_of": "2026-11-12",
+ "method": "150 Nifty-500 names scored as of 7 past dates (Jul 2024 to Jul 2026) with statements cut at each date and market cap rescaled to the as-of price; forward return over the next 126 sessions minus the sample mean on that date. News and insider data were unavailable historically, so the sentiment analyst is untested.",
+ "sample": {
+  "rows": 1050,
+  "dates": [
+   "2024-07-01",
+   "2024-10-01",
+   "2025-01-01",
+   "2025-07-01",
+   "2025-10-01",
+   "2026-01-01",
+   "2026-07-01"
+  ]
+ },
+ "verdict_evidence": {
+  "buy": {
+   "excess_6m_pct": 15.65,
+   "beat_pct": 72,
+   "n": 29,
+   "note": "a Buy from this engine was followed by about +16% vs peers over six months, but that rests on only 12 different stocks (mostly PSU banks and metals in one cycle): encouraging, not proven",
+   "stocks": 12,
+   "one_vote_per_stock": {
+    "excess_6m_pct": 16.5,
+    "beat_pct": 78,
+    "stocks_with_6m_data": 9
+   }
+  },
+  "hold": {
+   "excess_6m_pct": 0.04,
+   "beat_pct": 43,
+   "n": 53,
+   "note": "a Hold has tracked its peers (53 past cases)"
+  },
+  "sell": {
+   "excess_6m_pct": -0.56,
+   "beat_pct": 41,
+   "n": 818,
+   "note": "a Sell has not predicted underperformance (-0.6% vs peers over six months, 818 past cases) because several analysts are bearish on nearly every stock; read it as 'no Buy case', not as a signal to sell"
+  }
+ },
+ "lens_evidence_6m_pct": {
+  "0": -1.49,
+  "1": 0.7,
+  "2": 4.02,
+  "3": 6.52
+ },
+ "analyst_bearish_share": {
+  "aswath_damodaran": 0.812,
+  "ben_graham": 0.075,
+  "bill_ackman": 0.49,
+  "cathie_wood": 0.694,
+  "charlie_munger": 1.0,
+  "fundamentals": 0.288,
+  "growth": 0.275,
+  "michael_burry": 0.822,
+  "mohnish_pabrai": 0.71,
+  "peter_lynch": 0.386,
+  "phil_fisher": 0.524,
+  "rakesh_jhunjhunwala": 0.763,
+  "sentiment": 0.0,
+  "stanley_druckenmiller": 0.362,
+  "valuation": 0.656,
+  "warren_buffett": 0.895
+ },
+ "analyst_rank_ic_6m": {
+  "aswath_damodaran": 0.098,
+  "ben_graham": 0.021,
+  "bill_ackman": 0.054,
+  "cathie_wood": 0.061,
+  "charlie_munger": 0.0,
+  "fundamentals": 0.065,
+  "growth": 0.09,
+  "michael_burry": 0.026,
+  "mohnish_pabrai": 0.01,
+  "peter_lynch": 0.117,
+  "phil_fisher": 0.064,
+  "rakesh_jhunjhunwala": 0.109,
+  "sentiment": 0.0,
+  "stanley_druckenmiller": 0.113,
+  "valuation": 0.096,
+  "warren_buffett": 0.1
+ },
+ "reweighting": "Tested with leave-one-date-out and rejected: ranking skill was unchanged (rank IC 0.109 vs 0.111) and the extra Buy calls it produced beat peers by only 3% with a 32% hit rate, so votes are not reweighted.",
+ "caveats": [
+  "Cases repeat the same stocks across dates; the Buy result is 34 cases but 12 stocks.",
+  "All seven dates fall in up-regimes by the 200-day rule; nothing here speaks to bear markets.",
+  "Today's index constituents only (survivorship).",
+  "Half of the Buy stocks were already in the owner's book when the sample was drawn."
+ ]
+}

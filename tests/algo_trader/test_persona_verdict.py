@@ -1,4 +1,13 @@
+import pytest
+
+import src.analysis.persona_scores as ps
 from src.analysis.persona_scores import consensus_verdict, _conviction, QUANT
+
+
+@pytest.fixture(autouse=True)
+def _no_calibration(monkeypatch):
+    """These tests pin the uncalibrated arithmetic; the fitted multipliers get their own tests below."""
+    monkeypatch.setattr(ps, "CALIBRATION", {})
 
 
 def _row(personas):
@@ -123,3 +132,28 @@ def test_up_regime_buy_below_its_200ema_is_told_to_wait():
     v = consensus_verdict(_row(bulls), tech={"rsi": 57, "vs_e200": -7, "d20": 6, "vs_s20": 4, "pos52": 19}, regime="up")
     assert v["action"] == "Strong Buy" and "reclaims the 200-EMA" in v["tape"]
     assert "tape" not in consensus_verdict(_row(bulls), tech={"rsi": 57, "vs_e200": -7, "d20": 6, "vs_s20": 4, "pos52": 19})
+
+
+def test_verdict_states_its_own_track_record(monkeypatch):
+    monkeypatch.setattr(ps, "CALIBRATION", {"verdict_evidence": {"buy": {"excess_6m_pct": 15.7, "n": 29, "note": "a Buy beat its peers by about 16%"},
+                                                                 "sell": {"excess_6m_pct": -0.6, "n": 818, "note": "a Sell has not predicted underperformance"}}})
+    bulls = {f"b{i}": _p("bullish", 9.0) for i in range(7)}
+    v = consensus_verdict(_row(bulls))
+    assert v["action"] == "Strong Buy" and v["calibration"]["side"] == "buy" and "History: a Buy beat its peers" in v["reasoning"]
+    bears = {f"s{i}": _p("bearish", 1.0) for i in range(8)}
+    s = consensus_verdict(_row(bears))
+    assert s["calibration"]["side"] == "sell" and "has not predicted underperformance" in s["reasoning"]
+    # a tape downgrade keeps the track record of the fundamental verdict it came from
+    down = consensus_verdict(_row(bulls), tech={"rsi": 38, "vs_e200": -22, "d20": -14, "vs_s20": -6, "pos52": 5})
+    assert down["action"] == "Buy" and down["calibration"]["side"] == "buy"
+    # no evidence on file for a Hold here: nothing is claimed
+    mixed = {"a": _p("bullish", 7.0), "b": _p("bearish", 3.0)}
+    assert "calibration" not in consensus_verdict(_row(mixed))
+
+
+def test_shipped_calibration_file_is_sane():
+    c = ps._load_calibration()
+    ev = c["verdict_evidence"]
+    assert set(ev) == {"buy", "hold", "sell"} and all(e["n"] > 0 and e["note"] for e in ev.values())
+    assert ev["buy"]["excess_6m_pct"] > ev["hold"]["excess_6m_pct"] >= ev["sell"]["excess_6m_pct"] - 1
+    assert c["sample"]["rows"] >= 1000 and "rejected" in c["reweighting"]

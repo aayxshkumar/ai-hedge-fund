@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from src.utils.llm import capture_prompts
 
@@ -112,15 +113,19 @@ def _signal(name: str, f: dict, score, mx, mos):
 
 def score_tickers(tickers: list[str], personas: list[str] | None = None, include_quant: bool = True,
                   lookback_days: int = 90, tech: dict[str, dict] | None = None, sectors: dict[str, str] | None = None,
-                  regime: str | None = None) -> dict:
+                  regime: str | None = None, end_date: str | None = None) -> dict:
     """Return {ticker: {"personas": {name: {signal, score, max, mos, details, no_data}},
     "bullish": n, "bearish": n, "neutral": n, "no_data": n}}."""
     from src.utils.analysts import ANALYST_CONFIG
 
     wanted = personas or PERSONAS
     keys = [k for k in ANALYST_CONFIG if k in wanted or (include_quant and f"{k}_agent" in [q + "_agent" for q in QUANT] or k in QUANT)]
-    end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    # end_date scores as of a past day: statements are cut at that date by the data layer. Its
+    # market-price fields (market cap, P/E ...) come from live quotes, so a historical study must
+    # patch them to the as-of price first (analysis/_tools/persona_calib.py does).
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
+    end = end_dt.strftime("%Y-%m-%d")
+    start = (end_dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     state = {"messages": [], "data": {"tickers": tickers, "portfolio": {"cash": 1_000_000, "positions": {}},
                                       "start_date": start, "end_date": end, "analyst_signals": {}},
              "metadata": {"show_reasoning": False, "model_name": "none", "model_provider": "none", "request": None}}
@@ -171,6 +176,26 @@ def score_tickers(tickers: list[str], personas: list[str] | None = None, include
 
 QUANT_WEIGHT = 0.5            # the four quant analysts share one vote's worth each at half weight
 MIN_CONVICTION = 0.25         # a bare-threshold signal still counts, but not as much as a 9/10 score
+CALIBRATION_FILE = Path(__file__).with_name("persona_calibration.json")
+
+
+def _load_calibration() -> dict:
+    """What a verdict from this engine has been worth, measured on point-in-time history
+    (persona_calibration.json: sample, method, per-verdict and per-analyst results)."""
+    try:
+        return json.loads(CALIBRATION_FILE.read_text())
+    except Exception:
+        return {}
+
+
+CALIBRATION: dict = _load_calibration()
+
+
+def _evidence(action: str) -> dict | None:
+    """The measured track record of this kind of verdict, if the calibration file has one."""
+    side = "buy" if action in ("Strong Buy", "Buy") else "sell" if action in ("Strong Sell", "Sell") else "hold" if action == "Hold" else None
+    ev = (CALIBRATION.get("verdict_evidence") or {}).get(side) if side else None
+    return {"side": side, **ev} if ev else None
 LENDER_HINTS = ("BANK", "BK", "FIN", "SFB", "FUNDS", "CAPITAL", "CREDIT", "NBFC", "HOUSING", "AMC", "IREDA", "PFC", "RECLTD", "INSUR", "LIFE",
                 "VYSYA", "NAM-INDIA", "IIFL", "ANGELONE", "MUTHOOT", "MANAPPURAM", "BAJFINANCE", "SHRIRAM", "LICHSG", "CHOLA", "PNBHOUSING")
 LENDER_SECTORS = ("bank", "credit", "lending", "nbfc", "asset management", "capital markets", "mortgage", "insurance", "financial services", "brokerage")
@@ -346,6 +371,9 @@ def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = 
             reasoning += ". Lender: EBITDA/FCF-model personas at half weight"
         if tape:
             reasoning += f". Tape: {tape}"
+        evidence = _evidence(fund_action)
+        if evidence:
+            reasoning += f". History: {evidence['note']}"
     out = {"action": action, "confidence": round(conf, 3), "score": round(score, 4), "raw_score": round(raw, 4), "reasoning": reasoning,
            "signal_breakdown": breakdown, "analyst_signals": signals, "source": "persona_scores"}
     if tape:
@@ -353,4 +381,6 @@ def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = 
         out["fundamental_action"] = fund_action
     if regime:
         out["regime"] = regime
+    if action != "No data" and _evidence(fund_action):
+        out["calibration"] = _evidence(fund_action)
     return out
