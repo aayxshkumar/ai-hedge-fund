@@ -111,7 +111,8 @@ def _signal(name: str, f: dict, score, mx, mos):
 
 
 def score_tickers(tickers: list[str], personas: list[str] | None = None, include_quant: bool = True,
-                  lookback_days: int = 90, tech: dict[str, dict] | None = None, sectors: dict[str, str] | None = None) -> dict:
+                  lookback_days: int = 90, tech: dict[str, dict] | None = None, sectors: dict[str, str] | None = None,
+                  regime: str | None = None) -> dict:
     """Return {ticker: {"personas": {name: {signal, score, max, mos, details, no_data}},
     "bullish": n, "bearish": n, "neutral": n, "no_data": n}}."""
     from src.utils.analysts import ANALYST_CONFIG
@@ -164,7 +165,7 @@ def score_tickers(tickers: list[str], personas: list[str] | None = None, include
         sigs = [p.get("signal") for p in row["personas"].values()]
         row["bullish"] = sigs.count("bullish"); row["bearish"] = sigs.count("bearish")
         row["neutral"] = sigs.count("neutral"); row["no_data"] = sum(1 for p in row["personas"].values() if p.get("no_data"))
-        row["verdict"] = consensus_verdict(row, tech=(tech or {}).get(t), ticker=t, sector=(sectors or {}).get(t))
+        row["verdict"] = consensus_verdict(row, tech=(tech or {}).get(t), ticker=t, sector=(sectors or {}).get(t), regime=regime)
     return out
 
 
@@ -221,41 +222,75 @@ def _weighted(row: dict, ticker: str | None = None, sector: str | None = None) -
     return (num / den if den else 0.0), den, weights
 
 
-def _tape(action: str, tech: dict | None) -> tuple[str, str | None]:
+def market_regime(index: str = "^CRSLDX") -> str | None:
+    """'up' when the broad index closed above its 200-day average, 'down' when below, None if prices are unavailable."""
+    try:
+        import yfinance as yf
+        c = yf.Ticker(index).history(period="2y")["Close"].dropna()
+        if len(c) < 200:
+            return None
+        return "up" if float(c.iloc[-1]) > float(c.rolling(200).mean().iloc[-1]) else "down"
+    except Exception:
+        return None
+
+
+def _tape(action: str, tech: dict | None, regime: str | None = None) -> tuple[str, str | None]:
     """Price-trend overlay. Fundamentals pick the name; the tape picks the moment.
 
-    Buy-side verdicts in an established downtrend (well under the 200-EMA and
-    still falling over 20 sessions) are stepped down one notch and told to wait
-    for a base - unless the stock has already capitulated (RSI < 30), in which
-    case the verdict stands with a staged-entry note. Sell-side verdicts into an oversold tape keep their action but
-    say to sell into strength. Nothing here upgrades.
+    Regime-aware, from a 2024-26 test on ~450 Nifty-500 names (monthly, next 21 sessions):
+    with the index above its 200-day average, stocks in the top tenth of their 52-week range
+    and above their own 200-day average beat the universe by ~1.4%/month (t 2.3) and the old
+    "RSI > 70 at the highs" sell rule picked names that went on to beat it by ~2.3%/month,
+    while oversold names lagged; with the index below its 200-day average the signs flip
+    (oversold +1.3%/month, leaders -1.5%).
+
+    regime "up":   a leader is never sold or trimmed on the verdict or RSI alone (note only);
+                   a Buy in a downtrend is stepped down even if capitulated; a Buy below its
+                   200-EMA is told to wait until it reclaims it.
+    regime "down": a capitulated Buy (RSI < 30) stands with a staged entry; a Buy at the highs
+                   is told to stagger.
+    regime None:   as "down" for capitulation, plus the neutral notes. Nothing here upgrades.
     """
     if not tech:
         return action, None
     rsi, e200, d20, s20 = tech.get("rsi"), tech.get("vs_e200"), tech.get("d20"), tech.get("vs_s20")
     pos52 = tech.get("pos52")
-    if action in ("Strong Buy", "Buy") and e200 is not None and d20 is not None and e200 < -15 and d20 < -10:
-        if rsi is not None and rsi < 30:
-            # Capitulation on a name the fundamentals like: the short-term reversal premium sits here.
-            # Oct-Nov 2026 scorecard: scan-day RSI<35 names returned +14% vs +7.8%, and the two Buy
-            # verdicts this branch used to downgrade (RSI 20 and 12) returned +44% and +13.5%.
+    buy, sell = action in ("Strong Buy", "Buy"), action in ("Strong Sell", "Sell")
+    leader = pos52 is not None and pos52 >= 90 and e200 is not None and e200 > 0
+    if regime == "up" and leader:
+        if sell:
+            return action, (f"trend leader in a rising market ({pos52}% of 52-wk range, {e200:+.0f}% vs 200-EMA): do not sell on the verdict "
+                            "or on RSI alone - trail a stop under the 50-EMA")
+        return action, f"trend leader in a rising market ({pos52}% of 52-wk range): hold or add, trail a stop under the 50-EMA; RSI alone is not a sell signal"
+    if buy and e200 is not None and d20 is not None and e200 < -15 and d20 < -10:
+        if regime != "up" and rsi is not None and rsi < 30:
+            # Capitulation on a name the fundamentals like, in a falling or unknown market:
+            # the short-term reversal premium sits here (Oct-Nov 2026: RSI 20 and 12 -> +44%, +13.5%).
             return action, f"capitulated (RSI {rsi:.0f}, {e200:+.0f}% vs 200-EMA): stage the entry in thirds rather than waiting for a base"
-        return ("Buy" if action == "Strong Buy" else "Hold"), f"downtrend: {e200:+.0f}% vs 200-EMA, {d20:+.0f}% in 20 sessions - wait for a close above the 20-SMA before adding"
-    if action in ("Strong Sell", "Sell") and rsi is not None and rsi < 25:
+        wait = "the 200-EMA" if regime == "up" else "the 20-SMA"
+        why = "laggard in a rising market" if regime == "up" else "downtrend"
+        return ("Buy" if action == "Strong Buy" else "Hold"), f"{why}: {e200:+.0f}% vs 200-EMA, {d20:+.0f}% in 20 sessions - wait for a close above {wait} before adding"
+    if sell and rsi is not None and rsi < 25:
         return action, f"oversold (RSI {rsi:.0f}): sell into the next bounce, not at market"
-    if action in ("Strong Buy", "Buy") and rsi is not None and pos52 is not None and rsi > 75 and pos52 > 95:
+    if buy and regime == "up" and e200 is not None and e200 < 0:
+        return action, f"below its 200-EMA ({e200:+.0f}%) in a rising market: hold, add once it reclaims the 200-EMA"
+    if buy and regime == "down" and leader:
+        return action, f"at the highs ({pos52}% of 52-wk range) in a falling market: leaders lagged in down-regimes - stagger the entry"
+    if buy and regime is None and rsi is not None and pos52 is not None and rsi > 75 and pos52 > 95:
         return action, f"extended (RSI {rsi:.0f}, {pos52}% of 52-wk range): stagger the entry"
     if action == "Hold" and s20 is not None and rsi is not None and rsi < 30 and s20 < -8:
         return action, f"washed out (RSI {rsi:.0f}, {s20:+.0f}% vs 20-SMA): do not sell into this"
     return action, None
 
 
-def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = None, sector: str | None = None) -> dict:
+def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = None, sector: str | None = None,
+                      regime: str | None = None) -> dict:
     """Meta-style verdict from persona pre-signals (same shape the Portfolio page reads).
 
     Votes are conviction-weighted (see _conviction) with the four quant analysts
     at half weight, disagreement lowers confidence, and an optional technical
-    snapshot (rsi, vs_e200, vs_s20, d20, pos52) applies the tape overlay.
+    snapshot (rsi, vs_e200, vs_s20, d20, pos52) applies the tape overlay, which
+    reads the market regime ("up" / "down", see market_regime) when given.
     """
     bull, bear = row["bullish"], row["bearish"]
     total = bull + bear + row["neutral"]
@@ -294,7 +329,7 @@ def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = 
     dispersion = (min(bull, bear) / max(bull, bear)) if max(bull, bear) else 0.0
     conf = min(1.0, abs(wscore) * (1 - 0.5 * dispersion) + (0.15 if total and max(bull, bear) / total >= 0.7 else 0.0)) if total else 0.0
     fund_action = action
-    action, tape = _tape(action, tech) if action != "No data" else (action, None)
+    action, tape = _tape(action, tech, regime) if action != "No data" else (action, None)
     bulls = sorted((n for n, p in row["personas"].items() if p.get("signal") == "bullish"), key=lambda n: -weights.get(n, 0))
     bears = sorted((n for n, p in row["personas"].items() if p.get("signal") == "bearish"), key=lambda n: -weights.get(n, 0))
     if action == "No data":
@@ -316,4 +351,6 @@ def consensus_verdict(row: dict, tech: dict | None = None, ticker: str | None = 
     if tape:
         out["tape"] = tape
         out["fundamental_action"] = fund_action
+    if regime:
+        out["regime"] = regime
     return out

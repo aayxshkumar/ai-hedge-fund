@@ -94,3 +94,32 @@ def test_lender_halves_ebitda_model_personas():
     # Burry 1/10 -> conviction 0.8, halved on a lender = 0.4; Buffett 8.5/10 -> conviction 0.7, full weight
     assert bank["analyst_signals"]["michael_burry"]["weight"] == 0.4 and bank["analyst_signals"]["warren_buffett"]["weight"] == 0.7
     assert industrial["analyst_signals"]["michael_burry"]["weight"] == 0.8
+
+
+def test_up_regime_never_sells_a_leader_on_the_verdict_alone():
+    bears = {f"s{i}": _p("bearish", 1.0) for i in range(8)}
+    lead = {"rsi": 74, "vs_e200": 31, "d20": 23, "vs_s20": 11, "pos52": 95}
+    v = consensus_verdict(_row(bears), tech=lead, regime="up")
+    assert v["action"] == "Strong Sell" and "trend leader" in v["tape"] and "do not sell" in v["tape"] and v["regime"] == "up"
+    bulls = {f"b{i}": _p("bullish", 9.0) for i in range(7)}
+    b = consensus_verdict(_row(bulls), tech=lead, regime="up")
+    assert b["action"] == "Strong Buy" and "hold or add" in b["tape"]
+    # same leader in a falling market: a Buy is told to stagger, a Sell gets no leader note
+    assert "stagger" in consensus_verdict(_row(bulls), tech=lead, regime="down")["tape"]
+    assert "tape" not in consensus_verdict(_row(bears), tech=lead, regime="down")
+
+
+def test_regime_decides_whether_a_capitulated_buy_stands():
+    bulls = {f"b{i}": _p("bullish", 9.0) for i in range(7)}
+    cap = {"rsi": 20, "vs_e200": -31, "d20": -15, "vs_s20": -9, "pos52": 0}
+    down = consensus_verdict(_row(bulls), tech=cap, regime="down")
+    assert down["action"] == "Strong Buy" and "capitulated" in down["tape"]
+    up = consensus_verdict(_row(bulls), tech=cap, regime="up")
+    assert up["action"] == "Buy" and up["fundamental_action"] == "Strong Buy" and "laggard in a rising market" in up["tape"] and "200-EMA" in up["tape"]
+
+
+def test_up_regime_buy_below_its_200ema_is_told_to_wait():
+    bulls = {f"b{i}": _p("bullish", 9.0) for i in range(7)}
+    v = consensus_verdict(_row(bulls), tech={"rsi": 57, "vs_e200": -7, "d20": 6, "vs_s20": 4, "pos52": 19}, regime="up")
+    assert v["action"] == "Strong Buy" and "reclaims the 200-EMA" in v["tape"]
+    assert "tape" not in consensus_verdict(_row(bulls), tech={"rsi": 57, "vs_e200": -7, "d20": 6, "vs_s20": 4, "pos52": 19})
